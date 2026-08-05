@@ -1,1 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>AquaTrack - 飲水與飲品紀錄（可分享版）</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AquaTrack">
+<link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3105/3105807.png">
+<meta name="theme-color" content="#0284c7">
+<link rel="manifest" href="./aquatrack-manifest.json">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  window.__fb = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp, query, orderBy };
+</script>
+<script>
+tailwind.config = { darkMode: 'class', theme: { extend: { colors: { brand: { 50:'#f0f9ff',100:'#e0f2fe',500:'#0ea5e9',600:'#0284c7',700:'#0369a1' } } } } };
+</script>
+<style>
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:9999px}.dark ::-webkit-scrollbar-thumb{background:#475569}
+.wave-container{position:relative;overflow:hidden}
+.wave{position:absolute;width:200%;height:200%;top:-50%;left:-50%;background-color:rgba(14,165,233,.15);border-radius:40%;animation:rotate 10s linear infinite;transition:top .8s ease-in-out}
+.wave-2{animation:rotate 15s linear infinite;background-color:rgba(2,132,199,.1);border-radius:35%}
+@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+body{overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}
+.badge{font-size:10px;padding:2px 8px;border-radius:999px}
+</style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen font-sans antialiased transition-colors duration-200 pb-20 md:pb-6">
+<div class="max-w-md mx-auto min-h-screen flex flex-col justify-between shadow-2xl bg-white dark:bg-slate-900 relative">
+  <header class="pt-12 pb-4 px-6 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-b-3xl shadow-lg relative z-10">
+    <div class="flex justify-between items-center mb-2">
+      <div class="flex items-center space-x-2">
+        <i class="fa-solid fa-glass-water-droplet text-2xl text-sky-200 animate-bounce"></i>
+        <h1 class="text-xl font-black tracking-wide">AquaTrack</h1>
+      </div>
+      <div class="flex items-center space-x-3">
+        <button id="shareBtn" class="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white/30 transition"><i class="fa-solid fa-user-group text-sm"></i></button>
+        <button id="themeToggleBtn" class="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white/30 transition"><i class="fa-solid fa-moon text-sm"></i></button>
+        <button id="openSettingsBtn" class="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white/30 transition"><i class="fa-solid fa-gear text-sm"></i></button>
+      </div>
+    </div>
+    <p class="text-xs text-sky-100 font-medium" id="currentDateStr">載入日期中...</p>
+    <div class="mt-2 flex items-center gap-2">
+      <span id="syncStatus" class="badge bg-white/20 text-white font-bold"><i class="fa-solid fa-circle-notch fa-spin mr-1"></i>準備中</span>
+      <span id="roomBadge" class="badge bg-white/15 text-sky-50 font-medium hidden"></span>
+    </div>
+  </header>
+
+  <main class="flex-1 px-5 py-6 space-y-6 overflow-y-auto">
+    <section class="relative rounded-3xl bg-slate-100 dark:bg-slate-800/80 p-6 shadow-inner wave-container border border-slate-200/50 dark:border-slate-700/50">
+      <div id="waveBg" class="wave"></div>
+      <div id="waveBg2" class="wave wave-2"></div>
+      <div class="relative z-10 flex flex-col items-center">
+        <div class="relative w-44 h-44 flex items-center justify-center">
+          <svg class="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="42" stroke="currentColor" stroke-width="8" class="text-slate-200 dark:text-slate-700" fill="transparent" />
+            <circle id="progressCircle" cx="50" cy="50" r="42" stroke="currentColor" stroke-width="8" class="text-sky-500 transition-all duration-700 ease-out" fill="transparent" stroke-dasharray="263.89" stroke-dashoffset="263.89" stroke-linecap="round" />
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span class="text-xs font-semibold text-slate-500 dark:text-slate-400">當前有效總水量</span>
+            <div class="flex items-baseline space-x-1">
+              <span id="currentHydrationText" class="text-3xl font-black text-slate-800 dark:text-white">0</span>
+              <span class="text-xs text-slate-500 font-bold">ml</span>
+            </div>
+            <span id="goalPercentText" class="text-xs font-bold text-sky-600 dark:text-sky-400 mt-0.5">0% 目標</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 w-full mt-6 pt-4 border-t border-slate-200/60 dark:border-slate-700/60 text-center">
+          <div class="bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm p-2 rounded-xl">
+            <span class="text-[10px] text-slate-400 block font-medium">純白開水</span>
+            <span id="pureWaterText" class="text-sm font-bold text-sky-600 dark:text-sky-400">0 ml</span>
+          </div>
+          <div class="bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm p-2 rounded-xl">
+            <span class="text-[10px] text-slate-400 block font-medium">總卡路里</span>
+            <span id="totalCaloriesText" class="text-sm font-bold text-amber-500">0 kcal</span>
+          </div>
+          <div class="bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm p-2 rounded-xl">
+            <span class="text-[10px] text-slate-400 block font-medium">總糖份</span>
+            <span id="totalSugarText" class="text-sm font-bold text-rose-500">0 g</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="space-y-3">
+      <div class="flex justify-between items-center">
+        <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1"><i class="fa-solid fa-glass-water text-sky-500"></i><span>白開水快速紀錄</span></h2>
+        <span class="text-xs text-slate-400">水份吸收率 100%</span>
+      </div>
+      <div class="grid grid-cols-5 gap-1.5">
+        <button onclick="addWater(250)" class="bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-2xl py-2.5 flex flex-col items-center justify-center transition active:scale-95 shadow-sm"><i class="fa-solid fa-glass-water text-xs text-sky-500 mb-1"></i><span class="text-xs font-black text-sky-700 dark:text-sky-300">250</span><span class="text-[9px] text-slate-400">ml</span></button>
+        <button onclick="addWater(500)" class="bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-2xl py-2.5 flex flex-col items-center justify-center transition active:scale-95 shadow-sm"><i class="fa-solid fa-bottle-water text-xs text-sky-500 mb-1"></i><span class="text-xs font-black text-sky-700 dark:text-sky-300">500</span><span class="text-[9px] text-slate-400">ml</span></button>
+        <button onclick="addWater(750)" class="bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-2xl py-2.5 flex flex-col items-center justify-center transition active:scale-95 shadow-sm"><i class="fa-solid fa-faucet-drip text-xs text-sky-500 mb-1"></i><span class="text-xs font-black text-sky-700 dark:text-sky-300">750</span><span class="text-[9px] text-slate-400">ml</span></button>
+        <button onclick="addWater(800)" class="bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-2xl py-2.5 flex flex-col items-center justify-center transition active:scale-95 shadow-sm"><i class="fa-solid fa-whiskey-glass text-xs text-sky-500 mb-1"></i><span class="text-xs font-black text-sky-700 dark:text-sky-300">800</span><span class="text-[9px] text-slate-400">ml</span></button>
+        <button onclick="addWater(1000)" class="bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-2xl py-2.5 flex flex-col items-center justify-center transition active:scale-95 shadow-sm"><i class="fa-solid fa-faucet text-xs text-sky-500 mb-1"></i><span class="text-xs font-black text-sky-700 dark:text-sky-300">1000</span><span class="text-[9px] text-slate-400">ml</span></button>
+      </div>
+      <div class="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700">
+        <div class="pl-3 text-slate-400 text-xs"><i class="fa-solid fa-pen-to-square"></i></div>
+        <input type="number" id="manualWaterInput" placeholder="輸入自訂水 ml 數 (例如: 330)" class="flex-1 bg-transparent text-xs text-slate-800 dark:text-slate-100 focus:outline-none py-1.5 font-medium" min="1" max="5000">
+        <button onclick="addManualWater()" class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition active:scale-95 shadow">+ 新增</button>
+      </div>
+    </section>
+
+    <section class="space-y-3">
+      <div class="flex justify-between items-center">
+        <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1"><i class="fa-solid fa-mug-hot text-amber-500"></i><span>其他飲品</span></h2>
+        <button onclick="openAddDrinkModal()" class="text-xs font-bold text-sky-600 dark:text-sky-400 hover:underline">+ 自訂／詳細飲品</button>
+      </div>
+      <div class="grid grid-cols-4 gap-2">
+        <button onclick="quickAddBeverage('tea')" class="bg-emerald-50 dark:bg-slate-800 border border-emerald-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-emerald-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-leaf text-emerald-500 text-base mb-1"></i><span class="text-xs font-bold text-emerald-800 dark:text-emerald-300">無糖茶</span><span class="text-[9px] text-slate-400 mt-0.5">350ml | 98%</span></button>
+        <button onclick="quickAddBeverage('coffee')" class="bg-amber-50 dark:bg-slate-800 border border-amber-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-amber-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-mug-hot text-amber-700 text-base mb-1"></i><span class="text-xs font-bold text-amber-800 dark:text-amber-300">黑咖啡</span><span class="text-[9px] text-slate-400 mt-0.5">250ml | 96%</span></button>
+        <button onclick="quickAddBeverage('milk')" class="bg-indigo-50 dark:bg-slate-800 border border-indigo-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-indigo-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-cow text-indigo-500 text-base mb-1"></i><span class="text-xs font-bold text-indigo-800 dark:text-indigo-300">鮮奶/拿鐵</span><span class="text-[9px] text-slate-400 mt-0.5">250ml | 88%</span></button>
+        <button onclick="quickAddBeverage('boba')" class="bg-purple-50 dark:bg-slate-800 border border-purple-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-purple-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-glass-water text-purple-500 text-base mb-1"></i><span class="text-xs font-bold text-purple-800 dark:text-purple-300">手搖飲</span><span class="text-[9px] text-slate-400 mt-0.5">500ml | 80%</span></button>
+        <button onclick="quickAddBeverage('juice')" class="bg-orange-50 dark:bg-slate-800 border border-orange-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-orange-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-lemon text-orange-500 text-base mb-1"></i><span class="text-xs font-bold text-orange-800 dark:text-orange-300">果汁</span><span class="text-[9px] text-slate-400 mt-0.5">300ml | 85%</span></button>
+        <button onclick="quickAddBeverage('soda')" class="bg-rose-50 dark:bg-slate-800 border border-rose-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-rose-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-bottle-water text-rose-500 text-base mb-1"></i><span class="text-xs font-bold text-rose-800 dark:text-rose-300">汽水</span><span class="text-[9px] text-slate-400 mt-0.5">330ml | 80%</span></button>
+        <button onclick="quickAddBeverage('electrolyte')" class="bg-cyan-50 dark:bg-slate-800 border border-cyan-100 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-cyan-100 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-bolt text-cyan-500 text-base mb-1"></i><span class="text-xs font-bold text-cyan-800 dark:text-cyan-300">電解質水</span><span class="text-[9px] text-slate-400 mt-0.5">500ml | 100%</span></button>
+        <button onclick="openAddDrinkModal()" class="bg-slate-100 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700 p-2.5 rounded-2xl flex flex-col items-center text-center transition hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 shadow-sm"><i class="fa-solid fa-plus text-slate-400 text-base mb-1"></i><span class="text-xs font-bold text-slate-600 dark:text-slate-300">自訂飲品</span><span class="text-[9px] text-slate-400 mt-0.5">自由輸入</span></button>
+      </div>
+    </section>
+
+    <section class="bg-slate-100 dark:bg-slate-800/60 p-4 rounded-2xl space-y-3">
+      <div class="flex justify-between items-center text-xs">
+        <span class="font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1"><i class="fa-solid fa-cubes-stacked text-rose-500"></i><span>今日糖份攝取狀況</span></span>
+        <span id="sugarLimitText" class="text-slate-500 font-medium">0g / 建議上限 50g</span>
+      </div>
+      <div class="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden"><div id="sugarProgressBar" class="bg-rose-500 h-full transition-all duration-500 rounded-full" style="width:0%"></div></div>
+      <p id="sugarWarningText" class="text-[11px] text-slate-400 text-right">控制游離糖攝取有助於健康保養。</p>
+    </section>
+
+    <section class="space-y-3">
+      <div class="flex justify-between items-center">
+        <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1"><i class="fa-solid fa-clock-rotate-left text-sky-500"></i><span>今日紀錄歷程</span></h2>
+        <span id="logCountText" class="text-xs text-slate-400">共 0 筆</span>
+      </div>
+      <div id="logList" class="space-y-2 max-h-56 overflow-y-auto pr-1">
+        <div class="text-center py-8 text-slate-400 text-xs"><i class="fa-solid fa-glass-water-droplet text-2xl mb-2 text-slate-300 dark:text-slate-600 block"></i>今天還沒有任何紀錄，喝口水開始吧！</div>
+      </div>
+    </section>
+
+    <section class="space-y-3 pt-2">
+      <h2 class="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1"><i class="fa-solid fa-chart-line text-sky-500"></i><span>近 7 日水份與糖份趨勢</span></h2>
+      <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/60 shadow-sm"><canvas id="weeklyChart" class="w-full h-40"></canvas></div>
+    </section>
+  </main>
+
+  <footer class="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-around items-center text-xs z-10">
+    <button onclick="window.scrollTo({top:0,behavior:'smooth'})" class="flex flex-col items-center text-sky-600 dark:text-sky-400 font-bold"><i class="fa-solid fa-house text-base mb-0.5"></i><span>首頁</span></button>
+    <button onclick="openAddDrinkModal()" class="flex flex-col items-center text-slate-400 hover:text-sky-600 transition"><i class="fa-solid fa-circle-plus text-base mb-0.5"></i><span>新增紀錄</span></button>
+    <button onclick="openCalculatorModal()" class="flex flex-col items-center text-slate-400 hover:text-sky-600 transition"><i class="fa-solid fa-calculator text-base mb-0.5"></i><span>飲水計算</span></button>
+    <button onclick="openSettingsModal()" class="flex flex-col items-center text-slate-400 hover:text-sky-600 transition"><i class="fa-solid fa-sliders text-base mb-0.5"></i><span>設定</span></button>
+  </footer>
+</div>
+
+<div id="shareModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2"><i class="fa-solid fa-user-group text-sky-500"></i><span>與家人朋友共用</span></h3>
+      <button onclick="closeModal('shareModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p class="text-xs text-slate-500 dark:text-slate-400">輸入相同「房間代碼」的人會看到同一份飲水紀錄。留空代表只有你自己使用（本機儲存）。免費使用，最多建議 1-2 人共用一個房間代碼。</p>
+    <div>
+      <label class="block font-medium text-slate-500 mb-1 text-xs">房間代碼</label>
+      <input type="text" id="roomCodeInput" placeholder="例如: family-water-2026" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium text-xs">
+    </div>
+    <div>
+      <label class="block font-medium text-slate-500 mb-1 text-xs">你的暱稱（顯示喺紀錄旁）</label>
+      <input type="text" id="nicknameInput" placeholder="例如: 阿明" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium text-xs">
+    </div>
+    <button onclick="joinRoom()" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 rounded-2xl shadow-lg transition active:scale-95 text-xs">加入 / 更新共用房間</button>
+    <button onclick="leaveRoom()" class="w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold py-2.5 rounded-2xl transition active:scale-95 text-xs">退出共用，改回單機模式</button>
+  </div>
+</div>
+
+<div id="addDrinkModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl animate-fade-in border border-slate-100 dark:border-slate-700">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2"><i class="fa-solid fa-wine-glass text-sky-500"></i><span>新增／詳細紀錄飲品</span></h3>
+      <button onclick="closeModal('addDrinkModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="space-y-3 text-xs">
+      <div><label class="block font-medium text-slate-500 mb-1">飲品名稱</label><input type="text" id="modalDrinkName" placeholder="如：四季春無糖、美式咖啡、高蛋白" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium"></div>
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">快捷選擇容量 (ml)</label>
+        <div class="grid grid-cols-5 gap-1 mb-2">
+          <button onclick="setModalVolume(250)" class="bg-slate-100 dark:bg-slate-700 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-sky-100 dark:hover:bg-sky-800">250</button>
+          <button onclick="setModalVolume(500)" class="bg-slate-100 dark:bg-slate-700 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-sky-100 dark:hover:bg-sky-800">500</button>
+          <button onclick="setModalVolume(750)" class="bg-slate-100 dark:bg-slate-700 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-sky-100 dark:hover:bg-sky-800">750</button>
+          <button onclick="setModalVolume(800)" class="bg-slate-100 dark:bg-slate-700 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-sky-100 dark:hover:bg-sky-800">800</button>
+          <button onclick="setModalVolume(1000)" class="bg-slate-100 dark:bg-slate-700 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-sky-100 dark:hover:bg-sky-800">1000</button>
+        </div>
+        <input type="number" id="modalVolume" placeholder="手動輸入容量 (ml)" value="350" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-bold">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="block font-medium text-slate-500 mb-1">水份換算率 (%)</label><input type="number" id="modalFactor" value="100" min="0" max="100" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium"></div>
+        <div><label class="block font-medium text-slate-500 mb-1">溫度選擇</label>
+          <select id="modalTemp" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium">
+            <option value="ice">🧊 去冰/冰</option><option value="warm" selected>💧 常溫/溫</option><option value="hot">☕ 熱</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="block font-medium text-slate-500 mb-1">熱量 (每 100ml / kcal)</label><input type="number" id="modalCalorie" value="0" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium"></div>
+        <div><label class="block font-medium text-slate-500 mb-1">糖份 (每 100ml / g)</label><input type="number" id="modalSugar" value="0" step="0.1" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium"></div>
+      </div>
+    </div>
+    <button onclick="saveCustomDrink()" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 rounded-2xl shadow-lg transition active:scale-95 text-xs">儲存紀錄</button>
+  </div>
+</div>
+
+<div id="settingsModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2"><i class="fa-solid fa-gear text-sky-500"></i><span>個人與目標設定</span></h3>
+      <button onclick="closeModal('settingsModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="space-y-3 text-xs">
+      <div><label class="block font-medium text-slate-500 mb-1">每日飲水目標 (ml)</label><input type="number" id="settingGoal" value="2000" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-bold"></div>
+      <div><label class="block font-medium text-slate-500 mb-1">每日糖份攝取上限 (g)</label><input type="number" id="settingSugarLimit" value="50" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-bold"></div>
+      <div class="flex items-center justify-between pt-2"><span class="font-medium text-slate-700 dark:text-slate-300">提示音效</span><input type="checkbox" id="settingSound" checked class="w-4 h-4 accent-sky-600"></div>
+    </div>
+    <div class="pt-2 flex space-x-2">
+      <button onclick="clearTodayLogs()" class="w-1/2 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-400 font-bold py-2.5 rounded-xl text-xs transition">重置今日紀錄</button>
+      <button onclick="saveSettings()" class="w-1/2 bg-sky-600 hover:bg-sky-700 text-white font-bold py-2.5 rounded-xl text-xs transition">儲存變更</button>
+    </div>
+  </div>
+</div>
+
+<div id="calculatorModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2"><i class="fa-solid fa-calculator text-sky-500"></i><span>每日飲水量建議計算器</span></h3>
+      <button onclick="closeModal('calculatorModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="space-y-3 text-xs">
+      <div><label class="block font-medium text-slate-500 mb-1">體重 (kg)</label><input type="number" id="calcWeight" placeholder="例如: 65" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-bold"></div>
+      <div><label class="block font-medium text-slate-500 mb-1">每日運動量</label>
+        <select id="calcActivity" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium">
+          <option value="1">久坐 / 無規律運動 (+0 ml)</option><option value="1.2">輕度運動 (30分鐘) (+350 ml)</option><option value="1.4">中度運動 (60分鐘) (+700 ml)</option><option value="1.6">重度運動 / 戶外體力工作 (+1000 ml)</option>
+        </select>
+      </div>
+      <div class="p-3 bg-sky-50 dark:bg-slate-700/50 rounded-2xl text-center space-y-1">
+        <span class="text-[10px] text-slate-400 font-medium">建議每日最佳飲水量</span>
+        <div class="text-xl font-black text-sky-600 dark:text-sky-400"><span id="calcResult">--</span> ml</div>
+      </div>
+    </div>
+    <button onclick="applyCalculatedGoal()" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2.5 rounded-xl text-xs transition">套用此目標</button>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'aquatrack_data_v3';
+const ROOM_KEY = 'aquatrack_room_v3';
+let appData = { dailyGoal: 2000, sugarLimit: 50, soundEnabled: true, logs: [] };
+let roomConfig = JSON.parse(localStorage.getItem(ROOM_KEY) || 'null');
+let fb = null, db = null, unsubscribe = null;
+
+const FIREBASE_CONFIG = {
+  apiKey: "__REPLACE_WITH_YOUR_FIREBASE_API_KEY__",
+  authDomain: "__REPLACE__.firebaseapp.com",
+  projectId: "__REPLACE__",
+  storageBucket: "__REPLACE__.appspot.com",
+  messagingSenderId: "__REPLACE__",
+  appId: "__REPLACE__"
+};
+
+const drinkPresets = {
+  water:{name:'白開水',factor:100,calPer100:0,sugarPer100:0,temp:'warm'},
+  tea:{name:'無糖茶',factor:98,calPer100:0,sugarPer100:0,temp:'ice'},
+  coffee:{name:'黑咖啡',factor:96,calPer100:2,sugarPer100:0,temp:'hot'},
+  milk:{name:'鮮奶/拿鐵',factor:88,calPer100:60,sugarPer100:5,temp:'ice'},
+  boba:{name:'手搖飲',factor:80,calPer100:65,sugarPer100:7,temp:'ice'},
+  juice:{name:'純果汁',factor:85,calPer100:45,sugarPer100:10,temp:'ice'},
+  soda:{name:'汽水',factor:80,calPer100:42,sugarPer100:10,temp:'ice'},
+  electrolyte:{name:'電解質水',factor:100,calPer100:25,sugarPer100:4,temp:'ice'}
+};
+let chartInstance = null;
+
+window.onload = function() {
+  loadLocal();
+  updateDateDisplay();
+  initChart();
+  renderApp();
+  document.getElementById('manualWaterInput').addEventListener('keypress', e => { if (e.key === 'Enter') addManualWater(); });
+  document.getElementById('calcWeight').addEventListener('input', calculateWaterGoal);
+  document.getElementById('calcActivity').addEventListener('change', calculateWaterGoal);
+  document.getElementById('shareBtn').addEventListener('click', openShareModal);
+  document.getElementById('themeToggleBtn').addEventListener('click', () => document.documentElement.classList.toggle('dark'));
+  document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
+  tryInitFirebase();
+};
+
+function loadLocal() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) { try { appData = { ...appData, ...JSON.parse(saved) }; } catch(e){} }
+  document.getElementById('settingGoal').value = appData.dailyGoal;
+  document.getElementById('settingSugarLimit').value = appData.sugarLimit || 50;
+  document.getElementById('settingSound').checked = appData.soundEnabled;
+}
+function saveLocal() { localStorage.setItem(STORAGE_KEY, JSON.stringify(appData)); }
+
+function updateDateDisplay() {
+  const now = new Date();
+  document.getElementById('currentDateStr').innerText = now.toLocaleDateString('zh-TW', { year:'numeric', month:'long', day:'numeric', weekday:'long' });
+}
+
+function setSyncStatus(mode) {
+  const el = document.getElementById('syncStatus');
+  const roomBadge = document.getElementById('roomBadge');
+  if (mode === 'solo') { el.innerHTML = '<i class="fa-solid fa-mobile-screen mr-1"></i>單機模式'; roomBadge.classList.add('hidden'); }
+  else if (mode === 'syncing') { el.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>連線中'; }
+  else if (mode === 'shared') { el.innerHTML = '<i class="fa-solid fa-cloud-arrow-up mr-1"></i>已同步共用'; roomBadge.classList.remove('hidden'); roomBadge.innerText = '房間: ' + (roomConfig ? roomConfig.room : ''); }
+  else if (mode === 'error') { el.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>連線失敗，改用本機'; }
+}
+
+async function tryInitFirebase() {
+  if (FIREBASE_CONFIG.apiKey.includes('__REPLACE')) { setSyncStatus('solo'); return; }
+  try {
+    fb = window.__fb;
+    const app = fb.initializeApp(FIREBASE_CONFIG);
+    const auth = fb.getAuth(app);
+    db = fb.getFirestore(app);
+    await fb.signInAnonymously(auth);
+    if (roomConfig && roomConfig.room) { subscribeToRoom(roomConfig.room); } else { setSyncStatus('solo'); }
+  } catch (e) { console.error(e); setSyncStatus('error'); }
+}
+
+function subscribeToRoom(room) {
+  if (!db) { alert('尚未設定 Firebase，無法共用。'); return; }
+  setSyncStatus('syncing');
+  if (unsubscribe) unsubscribe();
+  const logsRef = fb.collection(db, 'aquatrack_rooms', room, 'logs');
+  const q = fb.query(logsRef, fb.orderBy('timestamp', 'asc'));
+  unsubscribe = fb.onSnapshot(q, snap => {
+    appData.logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    setSyncStatus('shared');
+    renderApp();
+  }, err => { console.error(err); setSyncStatus('error'); });
+}
+
+function openShareModal() {
+  document.getElementById('roomCodeInput').value = roomConfig ? roomConfig.room : '';
+  document.getElementById('nicknameInput').value = roomConfig ? roomConfig.nickname : '';
+  document.getElementById('shareModal').classList.remove('hidden');
+  document.getElementById('shareModal').classList.add('flex');
+}
+function joinRoom() {
+  const room = document.getElementById('roomCodeInput').value.trim();
+  const nickname = document.getElementById('nicknameInput').value.trim() || '匿名';
+  if (!room) { alert('請輸入房間代碼'); return; }
+  roomConfig = { room, nickname };
+  localStorage.setItem(ROOM_KEY, JSON.stringify(roomConfig));
+  if (!db) { alert('尚未設定 Firebase 連線資料，暫時只能單機使用。設定方法已寫喺回覆入面。'); closeModal('shareModal'); return; }
+  subscribeToRoom(room);
+  closeModal('shareModal');
+}
+function leaveRoom() {
+  roomConfig = null;
+  localStorage.removeItem(ROOM_KEY);
+  if (unsubscribe) unsubscribe();
+  loadLocal();
+  setSyncStatus('solo');
+  renderApp();
+  closeModal('shareModal');
+}
+
+function playWaterSound() {
+  if (!appData.soundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(400, ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 0.15);
+  } catch(e) {}
+}
+
+function addWater(volume) { addDrinkLog('白開水', volume, 100, 0, 0, 'warm'); }
+function addManualWater() {
+  const input = document.getElementById('manualWaterInput');
+  const val = parseInt(input.value);
+  if (isNaN(val) || val <= 0) { alert('請輸入有效的 ml 數字！'); return; }
+  addWater(val); input.value = '';
+}
+function quickAddBeverage(key) {
+  const drink = drinkPresets[key]; if (!drink) return;
+  let defaultVol = {tea:350,coffee:250,milk:250,boba:500,juice:300,soda:330,electrolyte:500}[key] || 350;
+  const calories = Math.round((drink.calPer100 * defaultVol) / 100);
+  const sugar = Math.round(((drink.sugarPer100 * defaultVol) / 100) * 10) / 10;
+  addDrinkLog(drink.name, defaultVol, drink.factor, calories, sugar, drink.temp);
+}
+
+async function addDrinkLog(drinkName, volume, factor, calories, sugar, temp) {
+  const hydratedVol = Math.round((volume * factor) / 100);
+  const newLog = {
+    timestamp: new Date().toISOString(), drinkName, volume, factor,
+    hydratedVolume: hydratedVol, calories: calories || 0, sugar: sugar || 0, temp: temp || 'warm',
+    author: roomConfig ? roomConfig.nickname : null
+  };
+  const prevHydration = getTodayTotals().hydrated;
+  if (roomConfig && db) {
+    try { await fb.addDoc(fb.collection(db, 'aquatrack_rooms', roomConfig.room, 'logs'), newLog); }
+    catch(e) { console.error(e); alert('同步失敗，請檢查網絡'); return; }
+  } else {
+    newLog.id = 'local-' + Date.now();
+    appData.logs.push(newLog);
+    saveLocal();
+  }
+  playWaterSound();
+  const newHydration = prevHydration + hydratedVol;
+  if (prevHydration < appData.dailyGoal && newHydration >= appData.dailyGoal) {
+    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+  }
+  renderApp();
+}
+
+async function deleteLog(id) {
+  if (roomConfig && db) {
+    try { await fb.deleteDoc(fb.doc(db, 'aquatrack_rooms', roomConfig.room, 'logs', id)); } catch(e){ console.error(e); }
+  } else {
+    appData.logs = appData.logs.filter(l => l.id !== id);
+    saveLocal();
+  }
+  renderApp();
+}
+
+function getTodayLogs() { const t = new Date().toDateString(); return appData.logs.filter(l => new Date(l.timestamp).toDateString() === t); }
+function getTodayTotals() {
+  return getTodayLogs().reduce((acc, log) => {
+    acc.hydrated += log.hydratedVolume;
+    if (log.drinkName === '白開水') acc.pureWater += log.volume;
+    acc.calories += log.calories || 0; acc.sugar += log.sugar || 0;
+    return acc;
+  }, { hydrated:0, pureWater:0, calories:0, sugar:0 });
+}
+
+function renderApp() {
+  const totals = getTodayTotals();
+  const goal = appData.dailyGoal; const sugarLimit = appData.sugarLimit || 50;
+  document.getElementById('currentHydrationText').innerText = totals.hydrated;
+  const percent = Math.min(Math.round((totals.hydrated / goal) * 100), 999);
+  document.getElementById('goalPercentText').innerText = percent + '% 目標';
+  const circle = document.getElementById('progressCircle');
+  const circumference = 2 * Math.PI * 42;
+  const strokePercent = Math.min(totals.hydrated / goal, 1);
+  circle.style.strokeDashoffset = circumference - (strokePercent * circumference);
+  const waveLevel = Math.min((totals.hydrated / goal) * 100, 100);
+  const topOffset = 50 - (waveLevel * 0.8);
+  document.getElementById('waveBg').style.top = topOffset + '%';
+  document.getElementById('waveBg2').style.top = (topOffset - 5) + '%';
+  document.getElementById('pureWaterText').innerText = totals.pureWater + ' ml';
+  document.getElementById('totalCaloriesText').innerText = totals.calories + ' kcal';
+  const sugarFormatted = Math.round(totals.sugar * 10) / 10;
+  document.getElementById('totalSugarText').innerText = sugarFormatted + ' g';
+  document.getElementById('sugarLimitText').innerText = sugarFormatted + 'g / 建議上限 ' + sugarLimit + 'g';
+  const sugarPercent = Math.min((totals.sugar / sugarLimit) * 100, 100);
+  const sugarBar = document.getElementById('sugarProgressBar'); sugarBar.style.width = sugarPercent + '%';
+  const sugarWarn = document.getElementById('sugarWarningText');
+  if (totals.sugar > sugarLimit) { sugarBar.classList.remove('bg-rose-500'); sugarBar.classList.add('bg-red-600'); sugarWarn.innerText = '⚠️ 提醒：今日糖份攝取已超過建議上限！'; sugarWarn.className = 'text-[11px] text-red-500 font-bold text-right'; }
+  else { sugarBar.classList.remove('bg-red-600'); sugarBar.classList.add('bg-rose-500'); sugarWarn.innerText = '控制游離糖攝取有助於健康保養。'; sugarWarn.className = 'text-[11px] text-slate-400 text-right'; }
+  renderLogList(); updateChartData();
+}
+
+function renderLogList() {
+  const logs = getTodayLogs().slice().reverse();
+  const listContainer = document.getElementById('logList');
+  document.getElementById('logCountText').innerText = '共 ' + logs.length + ' 筆';
+  if (logs.length === 0) { listContainer.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs"><i class="fa-solid fa-glass-water-droplet text-2xl mb-2 text-slate-300 dark:text-slate-600 block"></i>今天還沒有任何紀錄，喝口水開始吧！</div>'; return; }
+  listContainer.innerHTML = logs.map(log => {
+    const time = new Date(log.timestamp).toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit' });
+    let tempIcon = '💧'; if (log.temp === 'ice') tempIcon = '🧊'; if (log.temp === 'hot') tempIcon = '☕';
+    const authorTag = log.author ? `<span class="text-[10px] text-sky-500 font-bold">・${log.author}</span>` : '';
+    return `<div class="bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-100 dark:border-slate-700/60 shadow-sm flex justify-between items-center text-xs transition hover:border-sky-200">
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-xl bg-sky-50 dark:bg-slate-700 text-sky-600 dark:text-sky-400 flex items-center justify-center font-bold text-sm">${tempIcon}</div>
+        <div>
+          <div class="font-bold text-slate-800 dark:text-white flex items-center space-x-1"><span>${log.drinkName}</span><span class="text-[10px] text-slate-400 font-normal">(${log.volume} ml)</span>${authorTag}</div>
+          <div class="text-[10px] text-slate-400 flex space-x-2 mt-0.5"><span>時間: ${time}</span><span>有效水份: ${log.hydratedVolume} ml</span>${log.sugar>0?`<span class="text-rose-500 font-medium">糖: ${log.sugar}g</span>`:''}</div>
+        </div>
+      </div>
+      <button onclick="deleteLog('${log.id}')" class="text-slate-300 hover:text-rose-500 p-1.5 transition"><i class="fa-solid fa-trash-can text-sm"></i></button>
+    </div>`;
+  }).join('');
+}
+
+function openAddDrinkModal(){ document.getElementById('addDrinkModal').classList.remove('hidden'); document.getElementById('addDrinkModal').classList.add('flex'); }
+function setModalVolume(v){ document.getElementById('modalVolume').value = v; }
+function saveCustomDrink(){
+  const name = document.getElementById('modalDrinkName').value.trim() || '自訂飲品';
+  const vol = parseInt(document.getElementById('modalVolume').value) || 0;
+  const factor = parseInt(document.getElementById('modalFactor').value) || 100;
+  const calPer100 = parseFloat(document.getElementById('modalCalorie').value) || 0;
+  const sugarPer100 = parseFloat(document.getElementById('modalSugar').value) || 0;
+  const temp = document.getElementById('modalTemp').value;
+  if (vol <= 0) { alert('請輸入有效容量！'); return; }
+  const totalCal = Math.round((calPer100 * vol) / 100);
+  const totalSugar = Math.round(((sugarPer100 * vol) / 100) * 10) / 10;
+  addDrinkLog(name, vol, factor, totalCal, totalSugar, temp);
+  closeModal('addDrinkModal');
+  document.getElementById('modalDrinkName').value = '';
+}
+function openSettingsModal(){ document.getElementById('settingsModal').classList.remove('hidden'); document.getElementById('settingsModal').classList.add('flex'); }
+function saveSettings(){
+  const goal = parseInt(document.getElementById('settingGoal').value);
+  const sugarLimit = parseInt(document.getElementById('settingSugarLimit').value);
+  const sound = document.getElementById('settingSound').checked;
+  if (goal > 0) appData.dailyGoal = goal;
+  if (sugarLimit >= 0) appData.sugarLimit = sugarLimit;
+  appData.soundEnabled = sound;
+  saveLocal(); renderApp(); closeModal('settingsModal');
+}
+function clearTodayLogs(){
+  if (!confirm('確定要清除今天的全部紀錄嗎？')) return;
+  const t = new Date().toDateString();
+  if (roomConfig && db) {
+    getTodayLogs().forEach(l => fb.deleteDoc(fb.doc(db,'aquatrack_rooms',roomConfig.room,'logs',l.id)).catch(()=>{}));
+  } else {
+    appData.logs = appData.logs.filter(l => new Date(l.timestamp).toDateString() !== t);
+    saveLocal();
+  }
+  renderApp(); closeModal('settingsModal');
+}
+function openCalculatorModal(){ document.getElementById('calculatorModal').classList.remove('hidden'); document.getElementById('calculatorModal').classList.add('flex'); }
+function calculateWaterGoal(){
+  const weight = parseFloat(document.getElementById('calcWeight').value);
+  const activity = parseFloat(document.getElementById('calcActivity').value) || 1;
+  if (!weight || weight <= 0) { document.getElementById('calcResult').innerText = '--'; return; }
+  document.getElementById('calcResult').innerText = Math.round(weight * 35 * activity);
+}
+function applyCalculatedGoal(){
+  const val = parseInt(document.getElementById('calcResult').innerText);
+  if (val && val > 0) { appData.dailyGoal = val; document.getElementById('settingGoal').value = val; saveLocal(); renderApp(); closeModal('calculatorModal'); }
+  else alert('請先輸入有效的體重！');
+}
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); }
+
+function initChart(){
+  const ctx = document.getElementById('weeklyChart').getContext('2d');
+  chartInstance = new Chart(ctx, { type:'bar', data:{ labels:[], datasets:[
+    { label:'有效水份 (ml)', data:[], backgroundColor:'#0ea5e9', borderRadius:6, yAxisID:'y' },
+    { label:'糖份 (g)', data:[], backgroundColor:'#f43f5e', borderRadius:6, yAxisID:'y1' }
+  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:true, labels:{ boxWidth:10, font:{ size:10 } } } },
+    scales:{ x:{ grid:{ display:false }, ticks:{ font:{ size:10 } } }, y:{ type:'linear', position:'left', beginAtZero:true, grid:{ color:'rgba(226,232,240,0.5)' }, ticks:{ font:{ size:9 } } }, y1:{ type:'linear', position:'right', beginAtZero:true, grid:{ display:false }, ticks:{ font:{ size:9 } } } } } });
+}
+function updateChartData(){
+  if (!chartInstance) return;
+  const labels=[], hydrationData=[], sugarData=[];
+  for (let i=6;i>=0;i--){
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const dateStr = d.toDateString();
+    labels.push(d.toLocaleDateString('zh-TW',{ weekday:'narrow' }));
+    const dayLogs = appData.logs.filter(l => new Date(l.timestamp).toDateString() === dateStr);
+    hydrationData.push(dayLogs.reduce((s,l)=>s+l.hydratedVolume,0));
+    sugarData.push(Math.round(dayLogs.reduce((s,l)=>s+(l.sugar||0),0)*10)/10);
+  }
+  chartInstance.data.labels = labels;
+  chartInstance.data.datasets[0].data = hydrationData;
+  chartInstance.data.datasets[1].data = sugarData;
+  chartInstance.update();
+}
+</script>
+</body>
+</html>
 
