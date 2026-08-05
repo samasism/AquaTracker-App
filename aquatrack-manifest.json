@@ -1,0 +1,12 @@
+{
+  "name": "AquaTrack 飲水紀錄",
+  "short_name": "AquaTrack",
+  "start_url": "./aquatrack-app.html",
+  "display": "standalone",
+  "background_color": "#f0f9ff",
+  "theme_color": "#0284c7",
+  "description": "個人與共用飲水/飲品紀錄追蹤 App",
+  "icons": [
+    {"src": "https://cdn-icons-png.flaticon.com/512/3105/3105807.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
