@@ -1144,172 +1144,249 @@ function startMedReminderLoop(){
   }
 })();
 </script>
-<!--
-AquaTrack：每日食藥記錄統計 — 更新碼
-
-前提：你已經先加入「aquatrack-gout-medication-patch.html」。
-
-此功能會根據你設定的藥物與服用時段，顯示：
-- 今日已服／應服劑數與完成率
-- 最近 7 日每日食藥完成率
-- 最近 30 日整體完成率
-- 漏服次數
-
-注意：統計會以「目前已設定」的藥物和服藥時段作計算基準。
-如果日後你修改藥物或時間，之前日子的百分比也可能按新設定重新計算。
+<!-- AquaTrack Medication Logic v2 - 依剩餘次數記錄食藥時間 -->
+<!-- 
+使用方式：
+1. 將 <style> 內容加入你主檔案的 <style> 區塊
+2. 將 medSetupModal / medTodayModal 的 HTML 加入 <body>
+3. 將 <script> 內容加入主檔案 script 區塊（放在原本 medication script 之後或取代它）
 -->
 
 <style>
-  .med-stat-card {
-    border: 1px solid rgba(16, 185, 129, .24);
-    background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(20,184,166,.05));
-    border-radius: 16px;
-    padding: 12px;
-  }
-  .med-stat-progress { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,.18); }
-  .med-stat-progress > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#10b981,#14b8a6); transition: width .35s ease; }
-  .med-stat-day { display: grid; grid-template-columns: 38px 1fr 48px; align-items: center; gap: 8px; font-size: 11px; }
-  .med-stat-day + .med-stat-day { margin-top: 9px; }
-  .med-stat-day-bar { height: 8px; border-radius: 99px; overflow: hidden; background: rgba(148,163,184,.18); }
-  .med-stat-day-bar > div { height:100%; border-radius:99px; background:#10b981; }
-  .med-stat-day-bar .warning { background:#f59e0b; }
-  .med-stat-day-bar .danger { background:#ef4444; }
+.med-setup-card{border:1px solid rgba(16,185,129,.24);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(20,184,166,.05));border-radius:16px;padding:12px;margin-bottom:8px}
+.med-remain-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:800;background:#f59e0b;color:#fff}
+.med-remain-badge.done{background:#10b981}
+.med-today-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(148,163,184,.08);margin-bottom:6px}
+.med-today-row.completed{opacity:.55}
+.med-log-time{font-size:10px;color:#94a3b8}
+.med-take-btn{background:#10b981;color:#fff;font-size:11px;font-weight:700;padding:6px 12px;border-radius:12px;transition:.15s}
+.med-take-btn:active{transform:scale(.93)}
+.med-take-btn.disabled{background:#cbd5e1;pointer-events:none}
 </style>
 
-<div id="medStatsModal" class="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+<!-- ============ 藥物設定 Modal (先儲存要食既藥) ============ -->
+<div id="medSetupModal" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
   <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
     <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
       <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
-        <i class="fa-solid fa-chart-column text-emerald-500"></i><span>每日食藥統計</span>
+        <i class="fa-solid fa-pills text-emerald-500"></i><span>藥物設定</span>
       </h3>
-      <button onclick="closeMedStatsModal()" class="text-slate-400 hover:text-slate-600 text-lg" aria-label="關閉"><i class="fa-solid fa-xmark"></i></button>
+      <button onclick="closeMedSetupModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <div id="medStatsContent"></div>
-    <p class="text-[10px] text-slate-400">完成率按目前「已設定藥物 × 服用時段」計算。統計僅作自我記錄用途；如漏服或用藥問題，請跟隨醫生／藥劑師指示處理。</p>
+    <div id="medSetupList" class="space-y-2"></div>
+    <div class="med-setup-card">
+      <div class="grid grid-cols-3 gap-2 mb-2">
+        <input id="medSetupName" type="text" placeholder="藥物名稱" class="col-span-2 text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
+        <input id="medSetupTimes" type="number" min="1" max="10" value="1" placeholder="每日次數" class="text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
+      </div>
+      <button onclick="addMedSetup()" class="w-full bg-emerald-500 text-white font-bold text-xs py-2 rounded-xl active:scale-95 transition">
+        <i class="fa-solid fa-plus mr-1"></i>新增藥物
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 今日食藥 Modal (揀食左咩 + 顯示仲有幾多次) ============ -->
+<div id="medTodayModal" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-3 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
+        <i class="fa-solid fa-clock text-emerald-500"></i><span>今日食藥</span>
+      </h3>
+      <button onclick="closeMedTodayModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="medTodayContent" class="space-y-2"></div>
   </div>
 </div>
 
 <script>
-/* AquaTrack Medication Statistics module */
-function medStatDateKey(date) {
-  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+/* AquaTrack Medication v2
+   資料結構：
+   medications = [{id, name, timesPerDay}]  // 設定：淨係記次數，唔綁定固定鐘數
+   medLog = {
+     "2026-08-13": {
+       "medId1": [ "2026-08-13T09:02:00", "2026-08-13T14:10:00" ],  // 每次實際服用時間戳
+       "medId2": [ "2026-08-13T08:55:00" ]
+     }
+   }
+*/
+
+function medTodayKey(date){
+  date = date || new Date();
+  return date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-"+String(date.getDate()).padStart(2,"0");
 }
-function medStatExpectedDoses() {
-  if (typeof medications === 'undefined' || !Array.isArray(medications)) return 0;
-  return medications.reduce((total, med) => total + (Array.isArray(med.times) ? med.times.length : 0), 0);
+
+function loadMedications(){
+  try{ return JSON.parse(localStorage.getItem("medications")||"[]"); }catch(e){ return []; }
 }
-function medStatTakenForDate(dateKey) {
-  const log = typeof loadMedLog === 'function' ? loadMedLog() : {};
+function saveMedications(list){
+  localStorage.setItem("medications", JSON.stringify(list));
+}
+function loadMedLog(){
+  try{ return JSON.parse(localStorage.getItem("medLog")||"{}"); }catch(e){ return {}; }
+}
+function saveMedLog(log){
+  localStorage.setItem("medLog", JSON.stringify(log));
+}
+
+/* ---------- 設定畫面 ---------- */
+function openMedSetupModal(){
+  document.getElementById("medSetupModal").classList.remove("hidden");
+  document.getElementById("medSetupModal").classList.add("flex");
+  renderMedSetupList();
+}
+function closeMedSetupModal(){
+  document.getElementById("medSetupModal").classList.add("hidden");
+  document.getElementById("medSetupModal").classList.remove("flex");
+}
+function renderMedSetupList(){
+  const meds = loadMedications();
+  const box = document.getElementById("medSetupList");
+  if(!meds.length){
+    box.innerHTML = '<p class="text-center text-slate-400 text-xs py-4">未設定藥物，請於下方新增</p>';
+    return;
+  }
+  box.innerHTML = meds.map(m => `
+    <div class="med-setup-card flex justify-between items-center">
+      <div>
+        <div class="text-sm font-bold text-slate-700 dark:text-white">${m.name}</div>
+        <div class="text-[10px] text-slate-400">每日 ${m.timesPerDay} 次</div>
+      </div>
+      <button onclick="removeMedSetup('${m.id}')" class="text-rose-400 text-xs px-2"><i class="fa-solid fa-trash"></i></button>
+    </div>
+  `).join("");
+}
+function addMedSetup(){
+  const nameEl = document.getElementById("medSetupName");
+  const timesEl = document.getElementById("medSetupTimes");
+  const name = nameEl.value.trim();
+  const times = parseInt(timesEl.value,10) || 1;
+  if(!name) return;
+  const meds = loadMedications();
+  meds.push({ id: "med_"+Date.now(), name, timesPerDay: times });
+  saveMedications(meds);
+  nameEl.value = ""; timesEl.value = 1;
+  renderMedSetupList();
+  if(typeof renderMedStats === "function") renderMedStats();
+}
+function removeMedSetup(id){
+  saveMedications(loadMedications().filter(m => m.id !== id));
+  renderMedSetupList();
+  if(typeof renderMedStats === "function") renderMedStats();
+}
+
+/* ---------- 今日食藥畫面：揀食左咩 + 顯示仲有幾多次 ---------- */
+function openMedTodayModal(){
+  document.getElementById("medTodayModal").classList.remove("hidden");
+  document.getElementById("medTodayModal").classList.add("flex");
+  renderMedToday();
+}
+function closeMedTodayModal(){
+  document.getElementById("medTodayModal").classList.add("hidden");
+  document.getElementById("medTodayModal").classList.remove("flex");
+}
+function medTakenCountToday(medId){
+  const log = loadMedLog();
+  const todayKey = medTodayKey();
+  const arr = (log[todayKey] && log[todayKey][medId]) || [];
+  return arr.length;
+}
+function renderMedToday(){
+  const meds = loadMedications();
+  const content = document.getElementById("medTodayContent");
+  if(!meds.length){
+    content.innerHTML = '<p class="text-center text-slate-400 text-xs py-8">請先到「藥物設定」加入藥物</p>';
+    return;
+  }
+  const todayKey = medTodayKey();
+  const log = loadMedLog();
+  content.innerHTML = meds.map(m => {
+    const taken = (log[todayKey] && log[todayKey][m.id]) || [];
+    const remain = Math.max(0, m.timesPerDay - taken.length);
+    const done = remain === 0;
+    const lastTime = taken.length ? new Date(taken[taken.length-1]).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}) : "";
+    return `
+      <div class="med-today-row ${done ? "completed" : ""}">
+        <div>
+          <div class="text-sm font-bold text-slate-700 dark:text-white">${m.name}</div>
+          <div class="med-log-time">${taken.length ? "已食 "+taken.length+" 次，最近 "+lastTime : "今日未食"}</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="med-remain-badge ${done ? "done" : ""}">${done ? "✓" : "仲差 "+remain}</span>
+          <button class="med-take-btn ${done ? "disabled" : ""}" onclick="logMedTaken('${m.id}')">記錄</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+function logMedTaken(medId){
+  const meds = loadMedications();
+  const med = meds.find(m => m.id === medId);
+  if(!med) return;
+  const log = loadMedLog();
+  const todayKey = medTodayKey();
+  if(!log[todayKey]) log[todayKey] = {};
+  if(!log[todayKey][medId]) log[todayKey][medId] = [];
+  if(log[todayKey][medId].length >= med.timesPerDay) return;
+  log[todayKey][medId].push(new Date().toISOString());
+  saveMedLog(log);
+  renderMedToday();
+  if(typeof renderMedStats === "function") renderMedStats();
+}
+function undoLastMedTaken(medId){
+  const log = loadMedLog();
+  const todayKey = medTodayKey();
+  if(log[todayKey] && log[todayKey][medId] && log[todayKey][medId].length){
+    log[todayKey][medId].pop();
+    saveMedLog(log);
+    renderMedToday();
+    if(typeof renderMedStats === "function") renderMedStats();
+  }
+}
+
+/* ---------- 統計模組相容層（保留你原本的 medStat 計算邏輯，改用新資料結構）---------- */
+function medStatDateKey(date){ return medTodayKey(date); }
+function medStatExpectedDoses(){
+  const meds = loadMedications();
+  return meds.reduce((total, m) => total + (m.timesPerDay || 0), 0);
+}
+function medStatTakenForDate(dateKey){
+  const log = loadMedLog();
   const dayLog = log[dateKey] || {};
+  const meds = loadMedications();
   let taken = 0;
-  (medications || []).forEach(med => {
-    (med.times || []).forEach(time => {
-      if (dayLog[med.id + '_' + time]) taken++;
-    });
+  meds.forEach(m => {
+    const arr = dayLog[m.id] || [];
+    taken += Math.min(arr.length, m.timesPerDay);
   });
   return taken;
 }
-function medStatGetDay(date) {
+function medStatGetDay(date){
   const expected = medStatExpectedDoses();
   const taken = medStatTakenForDate(medStatDateKey(date));
-  const pct = expected ? Math.round((taken / expected) * 100) : 0;
-  return { key: medStatDateKey(date), expected, taken, missed: Math.max(0, expected - taken), pct };
-}
-function medStatClass(pct) { return pct >= 100 ? '' : pct >= 50 ? 'warning' : 'danger'; }
-function medStatFormatDate(date) {
-  return date.toLocaleDateString('zh-TW', { month:'numeric', day:'numeric', weekday:'narrow' });
-}
-function openMedStatsModal() {
-  document.getElementById('medStatsModal').classList.remove('hidden');
-  document.getElementById('medStatsModal').classList.add('flex');
-  renderMedStats();
-}
-function closeMedStatsModal() {
-  document.getElementById('medStatsModal').classList.add('hidden');
-  document.getElementById('medStatsModal').classList.remove('flex');
-}
-function renderMedStats() {
-  const content = document.getElementById('medStatsContent');
-  const expected = medStatExpectedDoses();
-  if (!expected) {
-    content.innerHTML = '<div class="text-center text-slate-400 py-8 text-xs">你仲未設定藥物／服藥時段。請先到綠色藥丸按鈕加入設定。</div>';
-    return;
-  }
-  const now = new Date();
-  const today = medStatGetDay(now);
-  const days7 = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate() - i);
-    days7.push({ date:d, stat:medStatGetDay(d) });
-  }
-  const days30 = [];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate() - i);
-    days30.push(medStatGetDay(d));
-  }
-  const sumTaken7 = days7.reduce((sum, d) => sum + d.stat.taken, 0);
-  const sumExpected7 = days7.reduce((sum, d) => sum + d.stat.expected, 0);
-  const rate7 = sumExpected7 ? Math.round(sumTaken7 / sumExpected7 * 100) : 0;
-  const sumTaken30 = days30.reduce((sum, d) => sum + d.taken, 0);
-  const sumExpected30 = days30.reduce((sum, d) => sum + d.expected, 0);
-  const rate30 = sumExpected30 ? Math.round(sumTaken30 / sumExpected30 * 100) : 0;
-  const missed30 = Math.max(0, sumExpected30 - sumTaken30);
-
-  content.innerHTML = `
-    <div class="med-stat-card mb-4">
-      <div class="flex justify-between items-center mb-2">
-        <div><div class="text-xs font-bold text-emerald-800 dark:text-emerald-300">今日完成率</div><div class="text-[10px] text-slate-500">已服 ${today.taken} / 應服 ${today.expected} 劑</div></div>
-        <div class="text-2xl font-black text-emerald-600">${today.pct}%</div>
-      </div>
-      <div class="med-stat-progress"><div style="width:${Math.min(100,today.pct)}%"></div></div>
-    </div>
-
-    <div class="grid grid-cols-2 gap-2 mb-4">
-      <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-2xl text-center">
-        <div class="text-[10px] text-slate-400">近 7 日完成率</div>
-        <div class="text-xl font-black text-slate-700 dark:text-white">${rate7}%</div>
-        <div class="text-[10px] text-slate-400">${sumTaken7}/${sumExpected7} 劑</div>
-      </div>
-      <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-2xl text-center">
-        <div class="text-[10px] text-slate-400">近 30 日漏服</div>
-        <div class="text-xl font-black ${missed30 ? 'text-orange-500' : 'text-emerald-600'}">${missed30}</div>
-        <div class="text-[10px] text-slate-400">30 日完成率 ${rate30}%</div>
-      </div>
-    </div>
-
-    <h4 class="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">近 7 日記錄</h4>
-    <div class="space-y-1">
-      ${days7.map(item => `
-        <div class="med-stat-day">
-          <span class="text-slate-500 dark:text-slate-400">${medStatFormatDate(item.date)}</span>
-          <div class="med-stat-day-bar"><div class="${medStatClass(item.stat.pct)}" style="width:${Math.min(100,item.stat.pct)}%"></div></div>
-          <span class="text-right font-bold ${item.stat.pct >= 100 ? 'text-emerald-600' : item.stat.pct >= 50 ? 'text-amber-500' : 'text-rose-500'}">${item.stat.taken}/${item.stat.expected}</span>
-        </div>`).join('')}
-    </div>`;
+  const pct = expected ? Math.round((taken/expected)*100) : 0;
+  return { key: medStatDateKey(date), expected, taken, missed: Math.max(0, expected-taken), pct };
 }
 
-/* 在原本食藥 Modal 內加入「查看統計」按鈕，不改動既有程式。 */
-function injectMedStatsButton() {
-  const target = document.getElementById('medTodayList');
-  if (!target || document.getElementById('openMedStatsBtn')) return;
-  const btn = document.createElement('button');
-  btn.id = 'openMedStatsBtn';
-  btn.type = 'button';
-  btn.className = 'w-full mb-3 bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-800 font-bold py-2.5 rounded-2xl text-xs transition active:scale-95';
-  btn.innerHTML = '<i class="fa-solid fa-chart-column mr-1"></i>查看每日食藥統計';
-  btn.onclick = openMedStatsModal;
-  target.parentNode.insertBefore(btn, target);
+/* 掛按鈕：一個開設定，一個開今日記錄 */
+function injectMedButtons(){
+  const target = document.getElementById("medTodayList");
+  if(document.getElementById("openMedSetupBtn") || document.getElementById("openMedTodayBtn")) return;
+  if(!target) return;
+  const wrap = document.createElement("div");
+  wrap.className = "grid grid-cols-2 gap-2 mb-3";
+  wrap.innerHTML = `
+    <button id="openMedTodayBtn" class="bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-800 font-bold py-2.5 rounded-2xl text-xs active:scale-95 transition"><i class="fa-solid fa-clock mr-1"></i>今日食藥</button>
+    <button id="openMedSetupBtn" class="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-700 font-bold py-2.5 rounded-2xl text-xs active:scale-95 transition"><i class="fa-solid fa-pills mr-1"></i>藥物設定</button>
+  `;
+  target.parentNode.insertBefore(wrap, target);
+  document.getElementById("openMedTodayBtn").onclick = openMedTodayModal;
+  document.getElementById("openMedSetupBtn").onclick = openMedSetupModal;
 }
-
-const oldOpenMedModalForStats = typeof openMedModal === 'function' ? openMedModal : null;
-if (oldOpenMedModalForStats) {
-  window.openMedModal = function() {
-    oldOpenMedModalForStats();
-    injectMedStatsButton();
-  };
-}
-setTimeout(injectMedStatsButton, 500);
+injectMedButtons();
+setTimeout(injectMedButtons, 500);
 </script>
+
 
 </body>
 </html>
