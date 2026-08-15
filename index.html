@@ -1,6 +1,24 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
+<!-- AquaTrack Medication Logic v2 - 依剩餘次數記錄食藥時間 -->
+<!-- 
+使用方式：
+1. 將 <style> 內容加入你主檔案的 <style> 區塊
+2. 將 medSetupModal / medTodayModal 的 HTML 加入 <body>
+3. 將 <script> 內容加入主檔案 script 區塊（放在原本 medication script 之後或取代它）
+-->
+<style>
+.med-setup-card{border:1px solid rgba(16,185,129,.24);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(20,184,166,.05));border-radius:16px;padding:12px;margin-bottom:8px}
+.med-remain-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:800;background:#f59e0b;color:#fff}
+.med-remain-badge.done{background:#10b981}
+.med-today-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(148,163,184,.08);margin-bottom:6px}
+.med-today-row.completed{opacity:.55}
+.med-log-time{font-size:10px;color:#94a3b8}
+.med-take-btn{background:#10b981;color:#fff;font-size:11px;font-weight:700;padding:6px 12px;border-radius:12px;transition:.15s}
+.med-take-btn:active{transform:scale(.93)}
+.med-take-btn.disabled{background:#cbd5e1;pointer-events:none}
+</style>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AquaTrack - 飲水與飲品紀錄（可分享版）</title>
@@ -757,25 +775,6 @@ function renderGoutList(){
 }
 
 /* ---------- 食藥提醒 ---------- */
-
-<!-- AquaTrack Medication Logic v2 - 依剩餘次數記錄食藥時間 -->
-<!-- 
-使用方式：
-1. 將 <style> 內容加入你主檔案的 <style> 區塊
-2. 將 medSetupModal / medTodayModal 的 HTML 加入 <body>
-3. 將 <script> 內容加入主檔案 script 區塊（放在原本 medication script 之後或取代它）
--->
-
-<style>
-.med-setup-card{border:1px solid rgba(16,185,129,.24);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(20,184,166,.05));border-radius:16px;padding:12px;margin-bottom:8px}
-.med-remain-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:800;background:#f59e0b;color:#fff}
-.med-remain-badge.done{background:#10b981}
-.med-today-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(148,163,184,.08);margin-bottom:6px}
-.med-today-row.completed{opacity:.55}
-.med-log-time{font-size:10px;color:#94a3b8}
-.med-take-btn{background:#10b981;color:#fff;font-size:11px;font-weight:700;padding:6px 12px;border-radius:12px;transition:.15s}
-.med-take-btn:active{transform:scale(.93)}
-.med-take-btn.disabled{background:#cbd5e1;pointer-events:none}
 </style>
 <!-- ============================================================
 AquaTrack 三大功能更新 Patch (2026-08-15)
