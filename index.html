@@ -187,6 +187,7 @@ body{overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}
     </div>
     <div class="space-y-3 text-xs">
       <div><label class="block font-medium text-slate-500 mb-1">飲品名稱</label><input type="text" id="modalDrinkName" placeholder="如：四季春無糖、美式咖啡、高蛋白" class="w-full bg-slate-100 dark:bg-slate-700 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white font-medium"></div>
+      <p id="modalAutoFillHint" class="text-10px text-slate-400"></p>
       <div>
         <label class="block font-medium text-slate-500 mb-1">快捷選擇容量 (ml)</label>
         <div class="grid grid-cols-5 gap-1 mb-2">
@@ -659,15 +660,6 @@ AquaTrack：痛風食物檢查 + 食藥提醒 Widget — 更新碼
 </div>
 
 <!-- 食藥提醒 Modal -->
-<div id="medModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
-  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
-    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
-      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
-        <i class="fa-solid fa-pills text-emerald-500"></i><span>今日食藥提醒</span>
-      </h3>
-      <button onclick="closeModalById('medModal')" class="text-slate-400 hover:text-slate-600 text-lg" aria-label="關閉"><i class="fa-solid fa-xmark"></i></button>
-    </div>
-
     <div id="medTodayList" class="text-xs"></div>
 
     <button onclick="enableMedNotifications()" class="w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold py-2.5 rounded-2xl text-xs transition active:scale-95">
@@ -765,161 +757,7 @@ function renderGoutList(){
 }
 
 /* ---------- 食藥提醒 ---------- */
-const MED_LIST_KEY = 'aquatrack_medications_v1';
-const MED_LOG_KEY = 'aquatrack_med_log_v1';
-const MED_NOTIF_KEY = 'aquatrack_med_notif_enabled';
-let medications = JSON.parse(localStorage.getItem(MED_LIST_KEY) || '[]');
-let medTimeSlotsDraft = [];
-let medReminderTimer = null;
 
-function todayKeyForMed(){
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-}
-function loadMedLog(){ return JSON.parse(localStorage.getItem(MED_LOG_KEY) || '{}'); }
-function saveMedLog(log){ localStorage.setItem(MED_LOG_KEY, JSON.stringify(log)); }
-function saveMedications(){ localStorage.setItem(MED_LIST_KEY, JSON.stringify(medications)); }
-
-function addMedTimeSlot(){
-  const val = document.getElementById('medTimeInput').value;
-  if (!val) { alert('請先選擇時間'); return; }
-  if (!medTimeSlotsDraft.includes(val)) medTimeSlotsDraft.push(val);
-  medTimeSlotsDraft.sort();
-  renderMedTimeSlotsPreview();
-}
-function renderMedTimeSlotsPreview(){
-  const el = document.getElementById('medTimeSlotsPreview');
-  el.innerHTML = medTimeSlotsDraft.map(t => `<span class="text-[11px] font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 rounded-full">${t}</span>`).join('') || '<span class="text-[11px] text-slate-400">尚未加入時段</span>';
-}
-function saveMedication(){
-  const name = document.getElementById('medNameInput').value.trim();
-  const dose = document.getElementById('medDoseInput').value.trim();
-  if (!name) { alert('請輸入藥物名稱'); return; }
-  if (medTimeSlotsDraft.length === 0) { alert('請至少加入一個服藥時段'); return; }
-  medications.push({ id: 'med-' + Date.now(), name, dose, times: [...medTimeSlotsDraft] });
-  saveMedications();
-  document.getElementById('medNameInput').value = '';
-  document.getElementById('medDoseInput').value = '';
-  medTimeSlotsDraft = [];
-  renderMedTimeSlotsPreview();
-  renderMedTodayList();
-  renderMedManageList();
-}
-function deleteMedication(id){
-  if (!confirm('確定刪除呢個藥物設定？')) return;
-  medications = medications.filter(m => m.id !== id);
-  saveMedications();
-  renderMedTodayList();
-  renderMedManageList();
-}
-function isMedTaken(medId, time){
-  const log = loadMedLog();
-  const dayLog = log[todayKeyForMed()] || {};
-  return !!dayLog[medId + '_' + time];
-}
-function toggleMedTaken(medId, time){
-  const log = loadMedLog();
-  const dayKey = todayKeyForMed();
-  if (!log[dayKey]) log[dayKey] = {};
-  const slotKey = medId + '_' + time;
-  log[dayKey][slotKey] = !log[dayKey][slotKey];
-  saveMedLog(log);
-  renderMedTodayList();
-}
-function renderMedTodayList(){
-  const container = document.getElementById('medTodayList');
-  const badge = document.getElementById('medBadgeCount');
-  if (medications.length === 0) {
-    container.innerHTML = '<div class="text-center text-slate-400 py-6">尚未設定任何藥物，喺下面「新增藥物」加入你的每日藥物同時間。</div>';
-    badge.style.display = 'none';
-    return;
-  }
-  let pendingCount = 0;
-  const rows = [];
-  medications.forEach(med => {
-    med.times.forEach(time => {
-      const taken = isMedTaken(med.id, time);
-      if (!taken) pendingCount++;
-      rows.push({ med, time, taken });
-    });
-  });
-  rows.sort((a,b) => a.time.localeCompare(b.time));
-  container.innerHTML = rows.map(r => `
-    <div class="med-item ${r.taken ? 'med-taken' : ''}">
-      <div class="flex-1">
-        <div class="font-bold text-slate-700 dark:text-slate-200">${r.med.name} <span class="text-slate-400 font-normal">・${r.time}</span></div>
-        ${r.med.dose ? `<div class="text-[10px] text-slate-400">${r.med.dose}</div>` : ''}
-      </div>
-      <button onclick="toggleMedTaken('${r.med.id}','${r.time}')" class="med-mark-btn ${r.taken ? 'done' : 'pending'}">
-        ${r.taken ? '<i class=\"fa-solid fa-check mr-1\"></i>已服用' : '未服 / 按此 Mark'}
-      </button>
-    </div>
-  `).join('');
-  badge.style.display = pendingCount > 0 ? 'flex' : 'none';
-  badge.innerText = pendingCount;
-}
-function renderMedManageList(){
-  const container = document.getElementById('medManageList');
-  if (medications.length === 0) { container.innerHTML = '<div class="text-slate-400 text-[11px]">未有已儲存的藥物設定。</div>'; return; }
-  container.innerHTML = medications.map(med => `
-    <div class="med-item">
-      <div class="flex-1">
-        <div class="font-bold text-slate-700 dark:text-slate-200">${med.name}</div>
-        <div class="text-[10px] text-slate-400">${med.dose || ''}${med.dose ? '・' : ''}時段：${med.times.join('、')}</div>
-      </div>
-      <button onclick="deleteMedication('${med.id}')" class="text-slate-300 hover:text-rose-500 p-1.5"><i class="fa-solid fa-trash-can"></i></button>
-    </div>
-  `).join('');
-}
-function openMedModal(){
-  document.getElementById('medModal').classList.remove('hidden');
-  document.getElementById('medModal').classList.add('flex');
-  renderMedTodayList();
-  renderMedManageList();
-  renderMedTimeSlotsPreview();
-  updateMedNotifStatusText();
-}
-function updateMedNotifStatusText(){
-  const enabled = localStorage.getItem(MED_NOTIF_KEY) === 'true' && typeof Notification !== 'undefined' && Notification.permission === 'granted';
-  document.getElementById('medNotifStatus').innerText = enabled ? '提醒已啟用（需保持此頁面開住先會彈出通知）' : '提醒未啟用';
-}
-function enableMedNotifications(){
-  if (!('Notification' in window)) { alert('此瀏覽器不支援通知功能'); return; }
-  Notification.requestPermission().then(perm => {
-    if (perm === 'granted') {
-      localStorage.setItem(MED_NOTIF_KEY, 'true');
-      new Notification('食藥提醒已啟用 💊', { body: '只要保持呢頁面開住，到時會提你食藥。' });
-      startMedReminderLoop();
-    } else {
-      localStorage.setItem(MED_NOTIF_KEY, 'false');
-      alert('未授權通知，可以去瀏覽器設定手動開啟。');
-    }
-    updateMedNotifStatusText();
-  });
-}
-function startMedReminderLoop(){
-  if (medReminderTimer) clearInterval(medReminderTimer);
-  medReminderTimer = setInterval(() => {
-    if (localStorage.getItem(MED_NOTIF_KEY) !== 'true') return;
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    const now = new Date();
-    const currentHM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-    medications.forEach(med => {
-      med.times.forEach(time => {
-        if (time === currentHM && !isMedTaken(med.id, time)) {
-          new Notification('食藥時間到了 💊', { body: med.name + (med.dose ? '（' + med.dose + '）' : '') + ' - ' + time });
-        }
-      });
-    });
-  }, 60 * 1000);
-}
-(function medInit(){
-  renderMedTodayList();
-  if (localStorage.getItem(MED_NOTIF_KEY) === 'true' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    startMedReminderLoop();
-  }
-})();
-</script>
 <!-- AquaTrack Medication Logic v2 - 依剩餘次數記錄食藥時間 -->
 <!-- 
 使用方式：
@@ -939,229 +777,464 @@ function startMedReminderLoop(){
 .med-take-btn:active{transform:scale(.93)}
 .med-take-btn.disabled{background:#cbd5e1;pointer-events:none}
 </style>
+<!-- ============================================================
+AquaTrack 三大功能更新 Patch (2026-08-15)
+1. 自訂飲品：輸入飲品名 -> 自動帶出水份/熱量/糖份 (常見飲品資料庫)
+2. 藥物設定：修復版 - 單一乾淨邏輯，設定每日次數 -> 顯示"仲差幾次" -> 按一下記錄實際時間
+3. 痛風食物查詢：改用 USDA/ODS-NIH 開源普林資料庫 cross-check + 保留香港大學單張做參考 quick note
+   排位：可食(Level 1)排最上，不可食(Level 3)排最底，加大字體、分組更易讀
+4. 移除：AI 相機估算食物功能 (Gemini API 在香港用唔到)
+============================================================ -->
 
-<!-- ============ 藥物設定 Modal (先儲存要食既藥) ============ -->
-<div id="medSetupModal" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+<!-- ============================================================
+第一步：刪除舊代碼
+在你 index.html 搜尋並刪除以下整段（用瀏覽器 Ctrl+F / Cmd+F 搜尋關鍵字定位）：
+
+A) 刪除 AI 相機功能：
+   - 搜尋 "aiFoodFab" -> 刪除整個 <style id 包含 aiFoodFab> 到 </style>
+   - 搜尋 "id=\"aiFoodFab\"" -> 刪除該 <button> 標籤
+   - 搜尋 "id=\"aiFoodModal\"" -> 刪除整個 <div id="aiFoodModal">...</div>
+   - 搜尋 "AquaTrack AI Photo Nutrition module" -> 刪除整個 <script>...</script>
+
+B) 刪除所有藥物相關舊代碼（有三套互相衝突的版本，全部刪除）：
+   - 搜尋 "medFab" -> 刪除相關 style 同 button
+   - 搜尋 "medSetupModal" / "medTodayModal" / "medModal" -> 刪除呢三個 modal 的 <div>
+   - 搜尋 "AquaTrack Medication" -> 刪除所有相關 <script> 段落（包括 v2 及舊版）
+   - 搜尋 "MEDLISTKEY" / "medications" / "medTimeSlotsDraft" -> 確認相關 script 已全部刪走
+
+C) 保留但會被下面新代碼取代：
+   - "goutFab" / "goutModal" / "goutFoodDatabase" -> 下面第三部分會提供新版本取代
+
+============================================================ -->
+
+<!-- ============================================================
+第二步：自訂飲品自動帶出水份/熱量/糖份
+把以下 <script> 加入 addDrinkModal 相關代碼附近（modalDrinkName 已存在於你原檔案）
+============================================================ -->
+<script>
+// 常見飲品自動填充資料庫（每100ml）：waterPct=水份佔比%, cal=熱量kcal, sugar=糖g
+const drinkAutoFillDB = [
+  {keys:["水","礦泉水","蒸餾水","filtered water"], waterPct:100, cal:0, sugar:0},
+  {keys:["綠茶","茉莉花茶","清茶","烏龍茶","普洱"], waterPct:99, cal:1, sugar:0},
+  {keys:["紅茶"], waterPct:98, cal:1, sugar:0},
+  {keys:["奶茶","港式奶茶"], waterPct:85, cal:60, sugar:6},
+  {keys:["咖啡","黑咖啡","美式"], waterPct:99, cal:2, sugar:0},
+  {keys:["拿鐵","latte","牛奶咖啡"], waterPct:88, cal:55, sugar:4},
+  {keys:["珍珠奶茶","boba","波霸"], waterPct:75, cal:65, sugar:9},
+  {keys:["檸檬茶"], waterPct:92, cal:35, sugar:8},
+  {keys:["檸水","鮮檸水"], waterPct:96, cal:15, sugar:3},
+  {keys:["可樂","cola"], waterPct:89, cal:42, sugar:10.6},
+  {keys:["汽水","雪碧","七喜","soda"], waterPct:89, cal:40, sugar:10},
+  {keys:["果汁","橙汁","蘋果汁","juice"], waterPct:88, cal:45, sugar:10},
+  {keys:["運動飲品","電解質","寶礦力","佳得樂"], waterPct:97, cal:25, sugar:4},
+  {keys:["牛奶","鮮奶"], waterPct:88, cal:60, sugar:5},
+  {keys:["豆漿","無糖豆漿"], waterPct:92, cal:35, sugar:1},
+  {keys:["椰子水"], waterPct:95, cal:19, sugar:2.6},
+  {keys:["啤酒","beer"], waterPct:92, cal:43, sugar:0},
+  {keys:["紅酒","wine"], waterPct:87, cal:85, sugar:0.6},
+  {keys:["清酒"], waterPct:80, cal:134, sugar:0},
+];
+
+function findDrinkAutoFill(name){
+  const n = name.trim().toLowerCase();
+  if(!n) return null;
+  for(const item of drinkAutoFillDB){
+    if(item.keys.some(k => n.includes(k.toLowerCase()))) return item;
+  }
+  return null;
+}
+
+// 綁定：輸入飲品名稱時自動帶出數值（debounce 避免打字時太頻繁觸發）
+let drinkAutoFillTimer = null;
+function bindDrinkAutoFill(){
+  const nameInput = document.getElementById("modalDrinkName");
+  if(!nameInput || nameInput.dataset.autofillBound) return;
+  nameInput.dataset.autofillBound = "1";
+  nameInput.addEventListener("input", () => {
+    clearTimeout(drinkAutoFillTimer);
+    drinkAutoFillTimer = setTimeout(() => {
+      const match = findDrinkAutoFill(nameInput.value);
+      const hint = document.getElementById("modalAutoFillHint");
+      if(match){
+        document.getElementById("modalFactor").value = match.waterPct;
+        document.getElementById("modalCalorie").value = match.cal;
+        document.getElementById("modalSugar").value = match.sugar;
+        if(hint){ hint.textContent = "✓ 已自動帶入參考數值，可自行調整"; hint.className = "text-10px text-emerald-500"; }
+      } else if(hint){
+        hint.textContent = "";
+      }
+    }, 350);
+  });
+}
+setTimeout(bindDrinkAutoFill, 300);
+document.addEventListener("click", (e) => {
+  if(e.target && e.target.id === "openAddDrinkModal") setTimeout(bindDrinkAutoFill, 100);
+});
+</script>
+
+<!-- 在 modalDrinkName 的 input 之後加一行提示文字（放在原本 addDrinkModal 內） -->
+<!-- <p id="modalAutoFillHint" class="text-10px text-slate-400"></p> -->
+
+
+<!-- ============================================================
+第三步：藥物設定 - 修復版（單一乾淨邏輯，取代之前全部版本）
+============================================================ -->
+<style>
+.med-item2{border:1px solid rgba(148,163,184,.25);border-radius:14px;padding:10px 12px;margin-bottom:8px;background:rgba(148,163,184,.05)}
+.med-item2.med-done{opacity:.6;background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.25)}
+.med-remain-badge2{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:800;background:#f59e0b;color:#fff}
+.med-remain-badge2.done{background:#10b981}
+.med-take-btn2{background:#10b981;color:#fff;font-size:12px;font-weight:800;padding:8px 14px;border-radius:12px;transition:.15s}
+.med-take-btn2:active{transform:scale(.93)}
+.med-take-btn2.disabled{background:#cbd5e1;pointer-events:none}
+.med-history-tag{font-size:10px;color:#64748b;background:rgba(148,163,184,.12);padding:2px 6px;border-radius:6px;margin-right:4px;display:inline-block;margin-top:2px}
+</style>
+
+<button id="medFab" type="button" aria-label="藥物" onclick="openMedModal()" style="position:fixed;right:max(18px, env(safe-area-inset-right));bottom:calc(148px + env(safe-area-inset-bottom));z-index:45;width:58px;height:58px;display:flex;align-items:center;justify-content:center;border:0;border-radius:9999px;color:#fff;cursor:pointer;box-shadow:0 10px 24px rgba(0,0,0,.28);background:linear-gradient(135deg,#059669,#10b981)">
+  <i class="fa-solid fa-pills text-xl"></i>
+  <span id="medBadgeCount" style="position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 4px;background:#ef4444;color:#fff;border-radius:999px;font-size:11px;font-weight:800;display:none;align-items:center;justify-content:center">0</span>
+</button>
+
+<div id="medModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
   <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
     <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
       <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
-        <i class="fa-solid fa-pills text-emerald-500"></i><span>藥物設定</span>
+        <i class="fa-solid fa-pills text-emerald-500"></i><span>藥物記錄</span>
       </h3>
-      <button onclick="closeMedSetupModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      <button onclick="closeModalById('medModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <div id="medSetupList" class="space-y-2"></div>
-    <div class="med-setup-card">
-      <div class="grid grid-cols-3 gap-2 mb-2">
-        <input id="medSetupName" type="text" placeholder="藥物名稱" class="col-span-2 text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
-        <input id="medSetupTimes" type="number" min="1" max="10" value="1" placeholder="每日次數" class="text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
+
+    <div>
+      <h4 class="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">今日進度</h4>
+      <div id="medTodayList2" class="text-xs"></div>
+    </div>
+
+    <div class="border-t border-slate-100 dark:border-slate-700 pt-3 space-y-2">
+      <h4 class="text-xs font-bold text-slate-600 dark:text-slate-300">新增藥物</h4>
+      <div class="grid grid-cols-3 gap-2">
+        <input id="med2NameInput" type="text" placeholder="藥物名稱" class="col-span-2 text-xs px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
+        <input id="med2TimesInput" type="number" min="1" max="10" value="1" placeholder="每日次數" class="text-xs px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
       </div>
-      <button onclick="addMedSetup()" class="w-full bg-emerald-500 text-white font-bold text-xs py-2 rounded-xl active:scale-95 transition">
+      <input id="med2DoseInput" type="text" placeholder="劑量備註（例如：1粒 / 5ml，可留空）" class="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white">
+      <button onclick="addMed2()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs transition active:scale-95">
         <i class="fa-solid fa-plus mr-1"></i>新增藥物
       </button>
     </div>
-  </div>
-</div>
 
-<!-- ============ 今日食藥 Modal (揀食左咩 + 顯示仲有幾多次) ============ -->
-<div id="medTodayModal" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
-  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-3 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
-    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
-      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
-        <i class="fa-solid fa-clock text-emerald-500"></i><span>今日食藥</span>
-      </h3>
-      <button onclick="closeMedTodayModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    <div class="border-t border-slate-100 dark:border-slate-700 pt-3 space-y-2">
+      <h4 class="text-xs font-bold text-slate-600 dark:text-slate-300">已設定藥物</h4>
+      <div id="med2ManageList" class="text-xs"></div>
     </div>
-    <div id="medTodayContent" class="space-y-2"></div>
   </div>
 </div>
 
 <script>
-/* AquaTrack Medication v2
-   資料結構：
-   medications = [{id, name, timesPerDay}]  // 設定：淨係記次數，唔綁定固定鐘數
-   medLog = {
-     "2026-08-13": {
-       "medId1": [ "2026-08-13T09:02:00", "2026-08-13T14:10:00" ],  // 每次實際服用時間戳
-       "medId2": [ "2026-08-13T08:55:00" ]
-     }
-   }
-*/
+// ---------- 藥物模組 v3（單一版本，取代所有舊版）----------
+const MED2_LIST_KEY = "aquatrack_med2_list";
+const MED2_LOG_KEY = "aquatrack_med2_log";
 
-function medTodayKey(date){
+function med2TodayKey(date){
   date = date || new Date();
   return date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-"+String(date.getDate()).padStart(2,"0");
 }
+function loadMed2List(){ try{ return JSON.parse(localStorage.getItem(MED2_LIST_KEY)||"[]"); }catch(e){ return []; } }
+function saveMed2List(list){ localStorage.setItem(MED2_LIST_KEY, JSON.stringify(list)); }
+function loadMed2Log(){ try{ return JSON.parse(localStorage.getItem(MED2_LOG_KEY)||"{}"); }catch(e){ return {}; } }
+function saveMed2Log(log){ localStorage.setItem(MED2_LOG_KEY, JSON.stringify(log)); }
 
-function loadMedications(){
-  try{ return JSON.parse(localStorage.getItem("medications")||"[]"); }catch(e){ return []; }
+function openMedModal(){
+  document.getElementById("medModal").classList.remove("hidden");
+  document.getElementById("medModal").classList.add("flex");
+  renderMed2Today();
+  renderMed2Manage();
 }
-function saveMedications(list){
-  localStorage.setItem("medications", JSON.stringify(list));
-}
-function loadMedLog(){
-  try{ return JSON.parse(localStorage.getItem("medLog")||"{}"); }catch(e){ return {}; }
-}
-function saveMedLog(log){
-  localStorage.setItem("medLog", JSON.stringify(log));
-}
-
-/* ---------- 設定畫面 ---------- */
-function openMedSetupModal(){
-  document.getElementById("medSetupModal").classList.remove("hidden");
-  document.getElementById("medSetupModal").classList.add("flex");
-  renderMedSetupList();
-}
-function closeMedSetupModal(){
-  document.getElementById("medSetupModal").classList.add("hidden");
-  document.getElementById("medSetupModal").classList.remove("flex");
-}
-function renderMedSetupList(){
-  const meds = loadMedications();
-  const box = document.getElementById("medSetupList");
-  if(!meds.length){
-    box.innerHTML = '<p class="text-center text-slate-400 text-xs py-4">未設定藥物，請於下方新增</p>';
-    return;
-  }
-  box.innerHTML = meds.map(m => `
-    <div class="med-setup-card flex justify-between items-center">
-      <div>
-        <div class="text-sm font-bold text-slate-700 dark:text-white">${m.name}</div>
-        <div class="text-[10px] text-slate-400">每日 ${m.timesPerDay} 次</div>
-      </div>
-      <button onclick="removeMedSetup('${m.id}')" class="text-rose-400 text-xs px-2"><i class="fa-solid fa-trash"></i></button>
-    </div>
-  `).join("");
-}
-function addMedSetup(){
-  const nameEl = document.getElementById("medSetupName");
-  const timesEl = document.getElementById("medSetupTimes");
+function addMed2(){
+  const nameEl = document.getElementById("med2NameInput");
+  const timesEl = document.getElementById("med2TimesInput");
+  const doseEl = document.getElementById("med2DoseInput");
   const name = nameEl.value.trim();
-  const times = parseInt(timesEl.value,10) || 1;
-  if(!name) return;
-  const meds = loadMedications();
-  meds.push({ id: "med_"+Date.now(), name, timesPerDay: times });
-  saveMedications(meds);
-  nameEl.value = ""; timesEl.value = 1;
-  renderMedSetupList();
-  if(typeof renderMedStats === "function") renderMedStats();
+  const times = Math.max(1, parseInt(timesEl.value,10) || 1);
+  const dose = doseEl.value.trim();
+  if(!name){ alert("請輸入藥物名稱"); return; }
+  const list = loadMed2List();
+  list.push({ id: "m2_"+Date.now(), name, timesPerDay: times, dose });
+  saveMed2List(list);
+  nameEl.value = ""; timesEl.value = 1; doseEl.value = "";
+  renderMed2Today();
+  renderMed2Manage();
 }
-function removeMedSetup(id){
-  saveMedications(loadMedications().filter(m => m.id !== id));
-  renderMedSetupList();
-  if(typeof renderMedStats === "function") renderMedStats();
+function deleteMed2(id){
+  if(!confirm("刪除呢個藥物設定？（歷史記錄會保留）")) return;
+  saveMed2List(loadMed2List().filter(m => m.id !== id));
+  renderMed2Today();
+  renderMed2Manage();
 }
-
-/* ---------- 今日食藥畫面：揀食左咩 + 顯示仲有幾多次 ---------- */
-function openMedTodayModal(){
-  document.getElementById("medTodayModal").classList.remove("hidden");
-  document.getElementById("medTodayModal").classList.add("flex");
-  renderMedToday();
-}
-function closeMedTodayModal(){
-  document.getElementById("medTodayModal").classList.add("hidden");
-  document.getElementById("medTodayModal").classList.remove("flex");
-}
-function medTakenCountToday(medId){
-  const log = loadMedLog();
-  const todayKey = medTodayKey();
-  const arr = (log[todayKey] && log[todayKey][medId]) || [];
-  return arr.length;
-}
-function renderMedToday(){
-  const meds = loadMedications();
-  const content = document.getElementById("medTodayContent");
-  if(!meds.length){
-    content.innerHTML = '<p class="text-center text-slate-400 text-xs py-8">請先到「藥物設定」加入藥物</p>';
-    return;
-  }
-  const todayKey = medTodayKey();
-  const log = loadMedLog();
-  content.innerHTML = meds.map(m => {
-    const taken = (log[todayKey] && log[todayKey][m.id]) || [];
-    const remain = Math.max(0, m.timesPerDay - taken.length);
-    const done = remain === 0;
-    const lastTime = taken.length ? new Date(taken[taken.length-1]).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}) : "";
-    return `
-      <div class="med-today-row ${done ? "completed" : ""}">
-        <div>
-          <div class="text-sm font-bold text-slate-700 dark:text-white">${m.name}</div>
-          <div class="med-log-time">${taken.length ? "已食 "+taken.length+" 次，最近 "+lastTime : "今日未食"}</div>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="med-remain-badge ${done ? "done" : ""}">${done ? "✓" : "仲差 "+remain}</span>
-          <button class="med-take-btn ${done ? "disabled" : ""}" onclick="logMedTaken('${m.id}')">記錄</button>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-function logMedTaken(medId){
-  const meds = loadMedications();
-  const med = meds.find(m => m.id === medId);
+function logMed2Taken(medId){
+  const list = loadMed2List();
+  const med = list.find(m => m.id === medId);
   if(!med) return;
-  const log = loadMedLog();
-  const todayKey = medTodayKey();
+  const log = loadMed2Log();
+  const todayKey = med2TodayKey();
   if(!log[todayKey]) log[todayKey] = {};
   if(!log[todayKey][medId]) log[todayKey][medId] = [];
   if(log[todayKey][medId].length >= med.timesPerDay) return;
   log[todayKey][medId].push(new Date().toISOString());
-  saveMedLog(log);
-  renderMedToday();
-  if(typeof renderMedStats === "function") renderMedStats();
+  saveMed2Log(log);
+  renderMed2Today();
 }
-function undoLastMedTaken(medId){
-  const log = loadMedLog();
-  const todayKey = medTodayKey();
+function undoMed2Taken(medId){
+  const log = loadMed2Log();
+  const todayKey = med2TodayKey();
   if(log[todayKey] && log[todayKey][medId] && log[todayKey][medId].length){
     log[todayKey][medId].pop();
-    saveMedLog(log);
-    renderMedToday();
-    if(typeof renderMedStats === "function") renderMedStats();
+    saveMed2Log(log);
+    renderMed2Today();
   }
 }
-
-/* ---------- 統計模組相容層（保留你原本的 medStat 計算邏輯，改用新資料結構）---------- */
-function medStatDateKey(date){ return medTodayKey(date); }
-function medStatExpectedDoses(){
-  const meds = loadMedications();
-  return meds.reduce((total, m) => total + (m.timesPerDay || 0), 0);
+function renderMed2Today(){
+  const list = loadMed2List();
+  const container = document.getElementById("medTodayList2");
+  const badge = document.getElementById("medBadgeCount");
+  if(!container) return;
+  if(!list.length){
+    container.innerHTML = '<div class="text-center text-slate-400 py-6 text-xs">請於下方新增要記錄的藥物</div>';
+    if(badge) badge.style.display = "none";
+    return;
+  }
+  const todayKey = med2TodayKey();
+  const log = loadMed2Log();
+  let pendingTotal = 0;
+  container.innerHTML = list.map(m => {
+    const taken = (log[todayKey] && log[todayKey][m.id]) || [];
+    const remain = Math.max(0, m.timesPerDay - taken.length);
+    const done = remain === 0;
+    if(!done) pendingTotal += remain;
+    const timeTags = taken.map(t => {
+      const tm = new Date(t).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"});
+      return `<span class="med-history-tag">${tm}</span>`;
+    }).join("");
+    return `
+      <div class="med-item2 ${done ? "med-done" : ""}">
+        <div class="flex justify-between items-center gap-2">
+          <div class="flex-1">
+            <div class="font-bold text-slate-700 dark:text-white">${m.name}${m.dose ? ' <span class="text-10px text-slate-400 font-normal">('+m.dose+')</span>' : ''}</div>
+            <div class="text-10px text-slate-400 mt-0.5">每日 ${m.timesPerDay} 次</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="med-remain-badge2 ${done ? "done" : ""}">${done ? "✓ 完成" : "仲差 "+remain}</span>
+            <button class="med-take-btn2 ${done ? "disabled" : ""}" onclick="logMed2Taken('${m.id}')">記錄</button>
+          </div>
+        </div>
+        ${taken.length ? `<div class="mt-2">${timeTags} ${!done ? `<button onclick="undoMed2Taken('${m.id}')" class="text-10px text-rose-400 ml-1"><i class="fa-solid fa-rotate-left"></i> 撤銷上一次</button>` : ""}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+  if(badge){
+    badge.style.display = pendingTotal > 0 ? "flex" : "none";
+    badge.innerText = pendingTotal;
+  }
 }
-function medStatTakenForDate(dateKey){
-  const log = loadMedLog();
-  const dayLog = log[dateKey] || {};
-  const meds = loadMedications();
-  let taken = 0;
-  meds.forEach(m => {
-    const arr = dayLog[m.id] || [];
-    taken += Math.min(arr.length, m.timesPerDay);
-  });
-  return taken;
+function renderMed2Manage(){
+  const list = loadMed2List();
+  const container = document.getElementById("med2ManageList");
+  if(!container) return;
+  if(!list.length){
+    container.innerHTML = '<div class="text-slate-400 text-11px">未設定任何藥物</div>';
+    return;
+  }
+  container.innerHTML = list.map(m => `
+    <div class="med-item2 flex justify-between items-center">
+      <div>
+        <div class="font-bold text-slate-700 dark:text-slate-200">${m.name}</div>
+        <div class="text-10px text-slate-400">每日 ${m.timesPerDay} 次 ${m.dose ? "· "+m.dose : ""}</div>
+      </div>
+      <button onclick="deleteMed2('${m.id}')" class="text-slate-300 hover:text-rose-500 p-1.5"><i class="fa-solid fa-trash-can"></i></button>
+    </div>
+  `).join("");
 }
-function medStatGetDay(date){
-  const expected = medStatExpectedDoses();
-  const taken = medStatTakenForDate(medStatDateKey(date));
-  const pct = expected ? Math.round((taken/expected)*100) : 0;
-  return { key: medStatDateKey(date), expected, taken, missed: Math.max(0, expected-taken), pct };
-}
-
-/* 掛按鈕：一個開設定，一個開今日記錄 */
-function injectMedButtons(){
-  const target = document.getElementById("medTodayList");
-  if(document.getElementById("openMedSetupBtn") || document.getElementById("openMedTodayBtn")) return;
-  if(!target) return;
-  const wrap = document.createElement("div");
-  wrap.className = "grid grid-cols-2 gap-2 mb-3";
-  wrap.innerHTML = `
-    <button id="openMedTodayBtn" class="bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-800 font-bold py-2.5 rounded-2xl text-xs active:scale-95 transition"><i class="fa-solid fa-clock mr-1"></i>今日食藥</button>
-    <button id="openMedSetupBtn" class="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-700 font-bold py-2.5 rounded-2xl text-xs active:scale-95 transition"><i class="fa-solid fa-pills mr-1"></i>藥物設定</button>
-  `;
-  target.parentNode.insertBefore(wrap, target);
-  document.getElementById("openMedTodayBtn").onclick = openMedTodayModal;
-  document.getElementById("openMedSetupBtn").onclick = openMedSetupModal;
-}
-injectMedButtons();
-setTimeout(injectMedButtons, 500);
+// 初始化（頁面載入時更新 badge）
+setTimeout(renderMed2Today, 300);
 </script>
+
+
+<!-- ============================================================
+第四步：痛風食物查詢 - USDA/NIH 開源普林資料庫 cross-check 版
+資料來源：USDA and ODS-NIH Purine Database Release 2.0 (2025, 公開領域資料)
+分級沿用香港大學單張三級制作參考 note：
+Level 1 可食 0-25mg/100g ｜ Level 2 酌量 25-150mg/100g ｜ Level 3 不可食 150mg以上
+排位：可食放最上，不可食放最底，加大字體、分組顯示，更易閱讀
+============================================================ -->
+<style>
+.gout-section-title{font-size:13px;font-weight:800;padding:6px 0;margin-top:14px;display:flex;align-items:center;gap:6px}
+.gout-item2{border:1px solid;border-radius:14px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.gout-level-1{background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.3)}
+.gout-level-2{background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3)}
+.gout-level-3{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3)}
+.gout-name{font-size:15px;font-weight:700;color:#1e293b}
+.dark .gout-name{color:#e2e8f0}
+.gout-purine-val{font-size:11px;color:#64748b;margin-top:2px}
+.gout-tag2{font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;white-space:nowrap;color:#fff}
+.gout-tag2-1{background:#10b981}
+.gout-tag2-2{background:#f59e0b}
+.gout-tag2-3{background:#ef4444}
+.gout-filter-btn2{font-size:12px;font-weight:700;padding:7px 12px;border-radius:999px;border:1px solid rgba(148,163,184,.4);color:#64748b;background:transparent}
+.gout-filter-btn2.active-1{background:#10b981;color:#fff;border-color:#10b981}
+.gout-filter-btn2.active-2{background:#f59e0b;color:#fff;border-color:#f59e0b}
+.gout-filter-btn2.active-3{background:#ef4444;color:#fff;border-color:#ef4444}
+.gout-filter-btn2.active-all{background:#334155;color:#fff;border-color:#334155}
+.gout-source-note{font-size:10px;color:#94a3b8;background:rgba(148,163,184,.08);padding:8px 10px;border-radius:10px;margin-top:10px;line-height:1.5}
+</style>
+
+<div id="goutModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
+    <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+      <h3 class="font-bold text-slate-800 dark:text-white flex items-center space-x-2">
+        <i class="fa-solid fa-utensils text-orange-500"></i><span>痛風食物查詢</span>
+      </h3>
+      <button onclick="closeModalById('goutModal')" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <input id="goutSearchInput" type="text" placeholder="搜尋食物名稱或分類" class="w-full bg-slate-100 dark:bg-slate-700 p-3 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none dark:text-white text-sm" oninput="renderGoutList()">
+
+    <div class="flex gap-2 flex-wrap">
+      <button class="gout-filter-btn2 active-all" data-level="all" onclick="setGoutFilter('all')">全部</button>
+      <button class="gout-filter-btn2" data-level="1" onclick="setGoutFilter('1')">✓ 可食</button>
+      <button class="gout-filter-btn2" data-level="2" onclick="setGoutFilter('2')">△ 酌量</button>
+      <button class="gout-filter-btn2" data-level="3" onclick="setGoutFilter('3')">✕ 不可食</button>
+    </div>
+
+    <div id="goutList" class="text-xs"></div>
+
+    <div class="gout-source-note">
+      <b>資料來源：</b>主要普林數值參考 USDA / NIH-ODS《Purine Database Release 2.0》(2025, 美國公開資料)。分級沿用香港大學藥理及藥劑學系衛教單張三級制作為參考 quick note（Level 1：0–25mg／100g｜Level 2：25–150mg／100g｜Level 3：150mg以上／100g）。個別數值如兩者有差異，已採用較保守（較高）數值分級。僅供日常自我記錄參考，不能取代醫生或營養師建議。
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- 痛風食物資料庫（USDA/NIH cross-check 版）----------
+const goutFoodDatabase2 = [
+  {cat:"穀物澀粉",name:"白飯",purine:5,level:1,src:"USDA"},
+  {cat:"穀物澀粉",name:"白麵包/吐司",purine:10,level:1,src:"USDA"},
+  {cat:"穀物澀粉",name:"意大利粉/通粉",purine:10,level:1,src:"USDA"},
+  {cat:"穀物澀粉",name:"粉絲/米粉",purine:8,level:1,src:"USDA"},
+  {cat:"穀物澀粉",name:"玉米片",purine:5,level:1,src:"USDA"},
+  {cat:"穀物澀粉",name:"燕麥",purine:30,level:2,src:"USDA"},
+  {cat:"穀物澀粉",name:"全麥麵包/糙米",purine:50,level:2,src:"USDA"},
+  {cat:"穀物澀粉",name:"麥芽/小麥胚芽",purine:65,level:2,src:"USDA"},
+  {cat:"蔬菜",name:"白菜/椰菜/西生菜",purine:15,level:1,src:"USDA"},
+  {cat:"蔬菜",name:"番茄/青瓜/胡蘿蔔",purine:15,level:1,src:"USDA"},
+  {cat:"蔬菜",name:"洋葱/薯仔",purine:15,level:1,src:"USDA"},
+  {cat:"蔬菜",name:"菠菜",purine:57,level:2,src:"USDA/HKU"},
+  {cat:"蔬菜",name:"蘆筍",purine:23,level:1,src:"USDA"},
+  {cat:"蔬菜",name:"西蘭花",purine:70,level:2,src:"USDA"},
+  {cat:"蔬菜",name:"椰菜花",purine:51,level:2,src:"USDA"},
+  {cat:"蔬菜",name:"冬菇/蘑菇",purine:58,level:2,src:"USDA/HKU"},
+  {cat:"蔬菜",name:"豆苗/黃豆芽",purine:80,level:3,src:"HKU"},
+  {cat:"蔬菜",name:"紫菜/海苔",purine:274,level:3,src:"USDA"},
+  {cat:"蔬菜",name:"蘆筍尖(嫩)",purine:26,level:2,src:"USDA"},
+  {cat:"水果",name:"蘋果/梨/橙",purine:15,level:1,src:"USDA"},
+  {cat:"水果",name:"西瓜/木瓜/香蕉",purine:30,level:1,src:"USDA"},
+  {cat:"水果",name:"提子/檸檬",purine:15,level:1,src:"USDA"},
+  {cat:"蛋類及奶類",name:"雞蛋/鴨蛋",purine:5,level:1,src:"USDA"},
+  {cat:"蛋類及奶類",name:"牛奶/芝士",purine:10,level:1,src:"USDA"},
+  {cat:"蛋類及奶類",name:"乳酪",purine:15,level:1,src:"USDA"},
+  {cat:"肉類",name:"雞胸肉",purine:137,level:2,src:"USDA"},
+  {cat:"肉類",name:"雞腿肉",purine:110,level:2,src:"USDA"},
+  {cat:"肉類",name:"瘦豬肉",purine:130,level:2,src:"USDA"},
+  {cat:"肉類",name:"牛肉",purine:110,level:2,src:"USDA"},
+  {cat:"肉類",name:"羊肉",purine:120,level:2,src:"USDA"},
+  {cat:"內臟",name:"雞肝",purine:243,level:3,src:"USDA"},
+  {cat:"內臟",name:"豬肝",purine:229,level:3,src:"USDA"},
+  {cat:"內臟",name:"豬腰/豬腸",purine:200,level:3,src:"HKU/USDA"},
+  {cat:"內臟",name:"鴨肝",purine:301,level:3,src:"USDA"},
+  {cat:"海鮮",name:"三文魚",purine:170,level:3,src:"USDA"},
+  {cat:"海鮮",name:"蝦",purine:147,level:2,src:"USDA"},
+  {cat:"海鮮",name:"蟹",purine:152,level:3,src:"USDA"},
+  {cat:"海鮮",name:"鱆魚/魷魚",purine:137,level:2,src:"USDA"},
+  {cat:"海鮮",name:"蠔/蜆",purine:184,level:3,src:"USDA"},
+  {cat:"海鮮",name:"沙甸魚",purine:210,level:3,src:"USDA"},
+  {cat:"海鮮",name:"鯡魚/鯖魚",purine:240,level:3,src:"USDA"},
+  {cat:"海鮮",name:"吞拿魚",purine:157,level:3,src:"USDA"},
+  {cat:"豆類",name:"硬豆腐/軟豆腐",purine:68,level:2,src:"USDA"},
+  {cat:"豆類",name:"黃豆/毛豆",purine:190,level:3,src:"USDA"},
+  {cat:"豆類",name:"扁豆/紅腰豆",purine:130,level:2,src:"USDA"},
+  {cat:"湯及調味",name:"雞湯/肉湯(濃)",purine:160,level:3,src:"HKU"},
+  {cat:"湯及調味",name:"酵母粉/雞精",purine:300,level:3,src:"HKU"},
+  {cat:"酒精飲品",name:"啤酒",purine:15,level:3,src:"USDA-note"},
+  {cat:"酒精飲品",name:"烈酒/威士忌",purine:5,level:2,src:"USDA-note"},
+  {cat:"零食",name:"花生/腰果",purine:100,level:2,src:"USDA"},
+  {cat:"零食",name:"開心果",purine:30,level:1,src:"USDA"}
+];
+let goutCurrentFilter2 = "all";
+
+function openGoutModal(){
+  document.getElementById("goutModal").classList.remove("hidden");
+  document.getElementById("goutModal").classList.add("flex");
+  renderGoutList();
+}
+function closeModalById(id){
+  document.getElementById(id).classList.add("hidden");
+  document.getElementById(id).classList.remove("flex");
+}
+function setGoutFilter(level){
+  goutCurrentFilter2 = level;
+  document.querySelectorAll(".gout-filter-btn2").forEach(btn => {
+    btn.classList.remove("active-1","active-2","active-3","active-all");
+    if(btn.dataset.level === level) btn.classList.add("active-"+level);
+  });
+  renderGoutList();
+}
+function goutLevelLabel2(level){
+  return level===1 ? "✓ 可食" : level===2 ? "△ 酌量" : "✕ 不可食";
+}
+function renderGoutList(){
+  const keyword = (document.getElementById("goutSearchInput").value || "").trim().toLowerCase();
+  let filtered = goutFoodDatabase2.filter(item => {
+    const matchKeyword = !keyword || item.name.toLowerCase().includes(keyword) || item.cat.toLowerCase().includes(keyword);
+    const matchLevel = goutCurrentFilter2 === "all" || String(item.level) === goutCurrentFilter2;
+    return matchKeyword && matchLevel;
+  });
+  // 排序：可食(1) 排最上，不可食(3) 排最底
+  filtered = filtered.sort((a,b) => a.level - b.level || a.purine - b.purine);
+
+  const container = document.getElementById("goutList");
+  if(!filtered.length){
+    container.innerHTML = '<div class="text-center text-slate-400 py-6">搵唔到相關食物</div>';
+    return;
+  }
+
+  const groups = {1: [], 2: [], 3: []};
+  filtered.forEach(item => groups[item.level].push(item));
+
+  const sectionTitles = {
+    1: '<div class="gout-section-title text-emerald-600 dark:text-emerald-400"><i class="fa-solid fa-circle-check"></i>可以放心食</div>',
+    2: '<div class="gout-section-title text-amber-500"><i class="fa-solid fa-triangle-exclamation"></i>酌量食用</div>',
+    3: '<div class="gout-section-title text-rose-500"><i class="fa-solid fa-circle-xmark"></i>盡量避免</div>'
+  };
+
+  let html = "";
+  [1,2,3].forEach(level => {
+    if(groups[level].length){
+      html += sectionTitles[level];
+      html += groups[level].map(item => `
+        <div class="gout-item2 gout-level-${item.level}">
+          <div class="flex-1">
+            <div class="gout-name">${item.name}</div>
+            <div class="gout-purine-val">${item.cat} · 約 ${item.purine}mg／100g</div>
+          </div>
+          <span class="gout-tag2 gout-tag2-${item.level}">${goutLevelLabel2(item.level)}</span>
+        </div>
+      `).join("");
+    }
+  });
+  container.innerHTML = html;
+}
+</script>
+
+
+
+
 
 
 </body>
